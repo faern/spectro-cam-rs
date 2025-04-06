@@ -139,7 +139,10 @@ struct Vertex {
     position: [f32; 2],
 }
 
-unsafe fn create_vertex_buffer(gl: &glow::Context, vertices: &[Vertex]) -> glow::NativeBuffer {
+unsafe fn create_vertex_buffer(
+    gl: &glow::Context,
+    vertices: &[Vertex],
+) -> (glow::NativeBuffer, glow::NativeVertexArray) {
     let vertices_u8: &[u8] = unsafe {
         core::slice::from_raw_parts(
             vertices.as_ptr() as *const u8,
@@ -148,18 +151,18 @@ unsafe fn create_vertex_buffer(gl: &glow::Context, vertices: &[Vertex]) -> glow:
     };
 
     // We construct a buffer and upload the data
-    let vbo = unsafe { gl.create_buffer() }.unwrap();
     unsafe {
+        let vbo = gl.create_buffer().unwrap();
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
         gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, vertices_u8, glow::STATIC_DRAW);
 
-        // // We now construct a vertex array to describe the format of the input buffer
-        // let vao = gl.create_vertex_array().unwrap();
-        // gl.bind_vertex_array(Some(vao));
-        // gl.enable_vertex_attrib_array(0);
-        // gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, 8, 0);
+        // We now construct a vertex array to describe the format of the input buffer
+        let vao = gl.create_vertex_array().unwrap();
+        gl.bind_vertex_array(Some(vao));
+        gl.enable_vertex_attrib_array(0);
+        gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, 8, 0);
+        (vbo, vao)
     }
-    vbo
 }
 
 unsafe fn create_program(
@@ -207,21 +210,17 @@ unsafe fn create_program(
 struct RotatingTriangle {
     gl: Arc<glow::Context>,
     program: glow::Program,
+    vertex_buffer: glow::Buffer,
     vertex_array: glow::VertexArray,
 }
 
 impl RotatingTriangle {
     fn new(gl: Arc<glow::Context>) -> Self {
-        use glow::HasContext as _;
-
         let (vertex_shader_source, fragment_shader_source) = (
             r#"
                 #version 330
-                const vec2 verts[3] = vec2[3](
-                    vec2(0.0, 1.0),
-                    vec2(-1.0, -1.0),
-                    vec2(1.0, -1.0)
-                );
+
+                in vec2 in_position;
                 const vec4 colors[3] = vec4[3](
                     vec4(1.0, 0.0, 0.0, 1.0),
                     vec4(0.0, 1.0, 0.0, 1.0),
@@ -229,9 +228,10 @@ impl RotatingTriangle {
                 );
                 out vec4 v_color;
                 uniform float u_angle;
+
                 void main() {
                     v_color = colors[gl_VertexID];
-                    gl_Position = vec4(verts[gl_VertexID], 0.0, 1.0);
+                    gl_Position = vec4(in_position, 0.0, 1.0);
                     gl_Position.x *= cos(u_angle);
                 }
             "#,
@@ -248,11 +248,24 @@ impl RotatingTriangle {
 
         let program = unsafe { create_program(&gl, vertex_shader_source, fragment_shader_source) };
 
-        let vertex_array = unsafe { gl.create_vertex_array() }.expect("Cannot create vertex array");
+        let vertices = [
+            Vertex {
+                position: [0.0, 1.0],
+            },
+            Vertex {
+                position: [-1.0, -1.0],
+            },
+            Vertex {
+                position: [1.0, -1.0],
+            },
+        ];
+        // let vertex_array = unsafe { gl.create_vertex_array() }.expect("Cannot create vertex array");
+        let (vertex_buffer, vertex_array) = unsafe { create_vertex_buffer(&gl, &vertices) };
 
         Self {
             gl,
             program,
+            vertex_buffer,
             vertex_array,
         }
     }
@@ -265,6 +278,7 @@ impl RotatingTriangle {
                 gl.get_uniform_location(self.program, "u_angle").as_ref(),
                 angle,
             );
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vertex_buffer));
             gl.bind_vertex_array(Some(self.vertex_array));
             gl.draw_arrays(glow::TRIANGLES, 0, 3);
         }
