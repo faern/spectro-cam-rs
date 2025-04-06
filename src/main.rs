@@ -23,7 +23,12 @@ fn main() -> eframe::Result {
     std::thread::spawn(move || CameraThread::new(frame_tx, window_tx, config_rx, result_tx).run());
     std::thread::spawn(move || SpectrumCalculator::new(window_rx, spectrum_tx).run());
 
-    let native_options = eframe::NativeOptions::default();
+    let native_options = eframe::NativeOptions {
+        // Multisampling (anti-aliasing) makes the UI look smoother
+        multisampling: 2,
+        renderer: eframe::Renderer::Glow,
+        ..Default::default()
+    };
 
     eframe::run_native(
         "spectro-cam-rs",
