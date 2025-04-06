@@ -20,6 +20,7 @@ use std::time::Duration;
 mod calibration;
 mod camera;
 mod camera_control;
+mod chromaticity;
 mod import_export;
 mod postprocessing;
 
@@ -29,6 +30,7 @@ pub struct SpectrometerGui {
     calibration_window: calibration::CalibrationWindow,
     postprocessing_window: postprocessing::PostProcessingWindow,
     camera_control_window: camera_control::CameraControlWindow,
+    chromaticity_window: chromaticity::ChromaticityWindow,
     import_export_window: import_export::ImportExportWindow,
     running: bool,
     paused: bool,
@@ -54,12 +56,19 @@ impl SpectrometerGui {
             Default::default()
         };
 
+        let gl = cc
+            .gl
+            .as_ref()
+            .expect("eframe must run with glow backend")
+            .clone();
+
         let mut gui = Self {
             config,
             camera_window: camera::CameraWindow::new(frame_rx),
             calibration_window: calibration::CalibrationWindow::new(),
             postprocessing_window: postprocessing::PostProcessingWindow::new(),
             camera_control_window: camera_control::CameraControlWindow::new(),
+            chromaticity_window: chromaticity::ChromaticityWindow::new(gl),
             import_export_window: import_export::ImportExportWindow::new(),
             running: false,
             paused: false,
@@ -383,6 +392,11 @@ impl SpectrometerGui {
         }
     }
 
+    fn draw_chromaticity_window(&mut self, ctx: &Context) {
+        self.chromaticity_window
+            .update(ctx, &mut self.config.view_config.show_chromaticity_window);
+    }
+
     fn draw_camera_control_window(&mut self, ctx: &Context) {
         if self.config.view_config.show_camera_control_window {
             self.refresh_controls();
@@ -410,6 +424,8 @@ impl SpectrometerGui {
         self.postprocessing_window.update(ctx, &mut self.config);
 
         self.draw_camera_control_window(ctx);
+
+        self.draw_chromaticity_window(ctx);
 
         if let Some(last_error) =
             self.import_export_window
@@ -518,6 +534,10 @@ impl SpectrometerGui {
             ui.checkbox(
                 &mut self.config.view_config.show_postprocessing_window,
                 "Postprocessing",
+            );
+            ui.checkbox(
+                &mut self.config.view_config.show_chromaticity_window,
+                "Chromaticity",
             );
             ui.checkbox(
                 &mut self.config.view_config.show_import_export_window,

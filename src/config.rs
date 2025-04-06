@@ -131,6 +131,7 @@ pub struct ViewConfig {
     pub show_camera_window: bool,
     pub show_calibration_window: bool,
     pub show_postprocessing_window: bool,
+    pub show_chromaticity_window: bool,
     pub show_camera_control_window: bool,
     pub show_import_export_window: bool,
 }
@@ -151,6 +152,7 @@ impl Default for ViewConfig {
             show_camera_window: true,
             show_calibration_window: false,
             show_postprocessing_window: false,
+            show_chromaticity_window: false,
             show_camera_control_window: false,
             show_import_export_window: false,
         }
