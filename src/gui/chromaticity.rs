@@ -158,7 +158,12 @@ struct Vertex {
 /// This first allocates a vertex buffer object (VBO) and uploads the vertex data to the GPU.
 /// Then it creates a vertex array object (VAO) and binds the VBO to it with VAO attribute
 /// zero pointing to the position data and VAO attribute one pointing to the color data.
-unsafe fn create_vertex_buffer(gl: &glow::Context, vertices: &[Vertex]) -> glow::NativeVertexArray {
+unsafe fn create_vertex_buffer(
+    gl: &glow::Context,
+    vertices: &[Vertex],
+    position_attribute_index: u32,
+    color_attribute_index: u32,
+) -> glow::NativeVertexArray {
     const BYTES_PER_VERTEX: usize = core::mem::size_of::<Vertex>();
 
     // These need to match the layout of the Vertex struct (number of floats in each field)
@@ -185,27 +190,27 @@ unsafe fn create_vertex_buffer(gl: &glow::Context, vertices: &[Vertex]) -> glow:
 
         // Point attribute zero to the position data in the buffer
         gl.vertex_attrib_pointer_f32(
-            0,
+            position_attribute_index,
             NUM_POSITION_COMPONENTS,
             glow::FLOAT,
             false,
             BYTES_PER_VERTEX as i32,
             core::mem::offset_of!(Vertex, position) as i32,
         );
-        // Activate attribute zero in the array
-        gl.enable_vertex_attrib_array(0);
+        // Activate the position attribute. By default all attributes are disabled
+        gl.enable_vertex_attrib_array(position_attribute_index);
 
         // Point attribute one to the color data in the buffer
         gl.vertex_attrib_pointer_f32(
-            1,
+            color_attribute_index,
             NUM_COLOR_COMPONENTS,
             glow::FLOAT,
             false,
             BYTES_PER_VERTEX as i32,
             core::mem::offset_of!(Vertex, color) as i32,
         );
-        // Activate attribute one in the array
-        gl.enable_vertex_attrib_array(1);
+        // Activate the color attribute. By default all attributes are disabled
+        gl.enable_vertex_attrib_array(color_attribute_index);
         vertex_array
     }
 }
@@ -238,9 +243,6 @@ unsafe fn create_program(
             shaders.push(shader);
         }
 
-        // gl.bind_attrib_location(program, 0, "in_position");
-        // gl.bind_attrib_location(program, 1, "in_color");
-
         gl.link_program(program);
         if !gl.get_program_link_status(program) {
             panic!("{}", gl.get_program_info_log(program));
@@ -269,17 +271,17 @@ impl RotatingTriangle {
 
                 uniform float u_angle;
 
-                in vec2 in_position;
-                in vec3 in_color;
+                in vec2 position;
+                in vec3 color;
 
                 out vec4 v_color;
 
                 void main() {
-                    v_color = vec4(in_color, 1.0);
+                    v_color = vec4(color, 1.0);
                     // v_color = vec4(1.0, 1.0, 0.0, 1.0);
                     // v_color = colors[gl_VertexID];
 
-                    gl_Position = vec4(in_position, 0.0, 1.0);
+                    gl_Position = vec4(position, 0.0, 1.0);
                     gl_Position.x *= cos(u_angle);
                 }
             "#,
@@ -298,6 +300,13 @@ impl RotatingTriangle {
 
         let program = unsafe { create_program(&gl, vertex_shader_source, fragment_shader_source) };
 
+        // Get the attribute indexes for our two shader input parameters.
+        // These are needed to bind the corresponding vertex buffers to the matching
+        // vertex array attributes below.
+        let position_attribute_index =
+            unsafe { gl.get_attrib_location(program, "position") }.unwrap();
+        let color_attribute_index = unsafe { gl.get_attrib_location(program, "color") }.unwrap();
+
         let vertices = [
             Vertex {
                 position: [0.0, 1.0],
@@ -313,7 +322,14 @@ impl RotatingTriangle {
             },
         ];
 
-        let vertex_array = unsafe { create_vertex_buffer(&gl, &vertices) };
+        let vertex_array = unsafe {
+            create_vertex_buffer(
+                &gl,
+                &vertices,
+                position_attribute_index,
+                color_attribute_index,
+            )
+        };
 
         Self {
             gl,
