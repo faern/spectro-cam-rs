@@ -1,3 +1,14 @@
+//! This module implements drawing an egui window containing a [Chromaticity diagram]
+//! using OpenGL. Since egui supports glow natively that's the OpenGL bindings we'll use.
+//!
+//! To understand OpenGL concepts such as "Vertex Array Objects" (VAOs) and
+//! "Vertex Buffer Objects" (VBOs) etc, this tutorial is very helpful:
+//! https://antongerdelan.net/opengl/hellotriangle.html
+//!
+//! [Chromaticity diagram]: https://en.wikipedia.org/wiki/CIE_1931_color_space#Chromaticity_diagram
+//!
+//!
+
 use eframe::{
     egui, egui_glow,
     glow::{self, HasContext},
@@ -150,6 +161,13 @@ unsafe fn create_vertex_buffer(
         )
     };
 
+    /// The "index" of our vertex buffer inside our vertex array object.
+    /// Each VAO can hold information about multiple VBOs. Here we only
+    /// bind one buffer to the array, so we just hardcode index 0 (the first VBO)
+    const ATTRIB_INDEX: u32 = 0;
+
+    const ELEMENTS_PER_VERTEX: i32 = 2;
+
     // We construct a buffer and upload the data
     unsafe {
         let vbo = gl.create_buffer().unwrap();
@@ -159,8 +177,8 @@ unsafe fn create_vertex_buffer(
         // We now construct a vertex array to describe the format of the input buffer
         let vao = gl.create_vertex_array().unwrap();
         gl.bind_vertex_array(Some(vao));
-        gl.enable_vertex_attrib_array(0);
-        gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, 8, 0);
+        gl.enable_vertex_attrib_array(ATTRIB_INDEX);
+        gl.vertex_attrib_pointer_f32(ATTRIB_INDEX, ELEMENTS_PER_VERTEX, glow::FLOAT, false, 0, 0);
         (vbo, vao)
     }
 }
@@ -278,7 +296,7 @@ impl RotatingTriangle {
                 gl.get_uniform_location(self.program, "u_angle").as_ref(),
                 angle,
             );
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vertex_buffer));
+            // gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vertex_buffer));
             gl.bind_vertex_array(Some(self.vertex_array));
             gl.draw_arrays(glow::TRIANGLES, 0, 3);
         }
