@@ -19,14 +19,12 @@ use std::sync::Arc;
 pub struct ChromaticityWindow {
     /// Behind an `Arc<Mutex<…>>` so we can pass it to [`egui::PaintCallback`] and paint later.
     rotating_triangle: Arc<Mutex<RotatingTriangle>>,
-    angle: f32,
 }
 
 impl ChromaticityWindow {
     pub fn new(gl: Arc<glow::Context>) -> Self {
         Self {
             rotating_triangle: Arc::new(Mutex::new(RotatingTriangle::new(gl))),
-            angle: 0.0,
         }
     }
 
@@ -49,19 +47,16 @@ impl ChromaticityWindow {
     }
 
     fn custom_painting(&mut self, ui: &mut egui::Ui) {
-        let (rect, response) =
+        let (rect, _response) =
             ui.allocate_exact_size(egui::Vec2::splat(300.0), egui::Sense::drag());
 
-        self.angle += response.drag_motion().x * 0.01;
-
         // Clone locals so we can move them into the paint callback:
-        let angle = self.angle;
         let rotating_triangle = self.rotating_triangle.clone();
 
         let callback = egui::PaintCallback {
             rect,
             callback: std::sync::Arc::new(egui_glow::CallbackFn::new(move |_info, painter| {
-                rotating_triangle.lock().paint(painter.gl(), angle);
+                rotating_triangle.lock().paint(painter.gl());
             })),
         };
         ui.painter().add(callback);
@@ -269,7 +264,7 @@ impl RotatingTriangle {
             r#"
                 #version 330
 
-                uniform float u_angle;
+                // uniform float u_angle;
 
                 in vec2 position;
                 in vec3 color;
@@ -277,12 +272,8 @@ impl RotatingTriangle {
                 out vec4 v_color;
 
                 void main() {
-                    v_color = vec4(color, 1.0);
-                    // v_color = vec4(1.0, 1.0, 0.0, 1.0);
-                    // v_color = colors[gl_VertexID];
-
                     gl_Position = vec4(position, 0.0, 1.0);
-                    gl_Position.x *= cos(u_angle);
+                    v_color = vec4(color, 1.0);
                 }
             "#,
             r#"
@@ -338,15 +329,10 @@ impl RotatingTriangle {
         }
     }
 
-    fn paint(&self, gl: &glow::Context, angle: f32) {
+    fn paint(&self, gl: &glow::Context) {
         use glow::HasContext as _;
         unsafe {
             gl.use_program(Some(self.program));
-            gl.uniform_1_f32(
-                gl.get_uniform_location(self.program, "u_angle").as_ref(),
-                angle,
-            );
-            // gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vertex_buffer));
             gl.bind_vertex_array(Some(self.vertex_array));
             gl.draw_arrays(glow::TRIANGLES, 0, 3);
         }
