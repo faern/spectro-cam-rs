@@ -153,61 +153,60 @@ struct Vertex {
     color: [f32; 3],
 }
 
+/// Returns a vertex array object (VAO) representing the given vertices.
+///
+/// This first allocates a vertex buffer object (VBO) and uploads the vertex data to the GPU.
+/// Then it creates a vertex array object (VAO) and binds the VBO to it with VAO attribute
+/// zero pointing to the position data and VAO attribute one pointing to the color data.
 unsafe fn create_vertex_buffer(gl: &glow::Context, vertices: &[Vertex]) -> glow::NativeVertexArray {
-    // let vertices_u8: &[u8] = unsafe {
-    //     core::slice::from_raw_parts(
-    //         vertices.as_ptr() as *const u8,
-    //         vertices.len() * core::mem::size_of::<Vertex>(),
-    //     )
-    // };
+    const BYTES_PER_VERTEX: usize = core::mem::size_of::<Vertex>();
 
-    // assert_eq!(core::mem::size_of::<Vertex>(), 20);
+    // These need to match the layout of the Vertex struct (number of floats in each field)
+    const NUM_POSITION_COMPONENTS: i32 = 2;
+    const NUM_COLOR_COMPONENTS: i32 = 3;
 
-    // /// The "index" of our vertex buffer inside our vertex array object.
-    // /// Each VAO can hold information about multiple VBOs. Here we only
-    // /// bind one buffer to the array, so we just hardcode index 0 (the first VBO)
-    // const ATTRIB_INDEX: u32 = 0;
-
-    // const ELEMENTS_PER_VERTEX: i32 = 5; // 2 for position, 3 for color
-
-    unsafe {
-        // // We construct a buffer and upload the data
-        // let vbo = gl.create_buffer().unwrap();
-        // gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
-        // gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, vertices_u8, glow::STATIC_DRAW);
-        let positions = vertices.iter().flat_map(|v| v.position).collect::<Vec<_>>();
-        let positions_vbo = create_buffer(gl, &positions);
-
-        let colors = vertices.iter().flat_map(|v| v.color).collect::<Vec<_>>();
-        let colors_vbo = create_buffer(gl, &colors);
-
-        // We now construct a vertex array to describe the format of the input buffer
-        let vao = gl.create_vertex_array().unwrap();
-        gl.bind_vertex_array(Some(vao));
-        gl.bind_buffer(glow::ARRAY_BUFFER, Some(positions_vbo));
-        gl.enable_vertex_attrib_array(0);
-        gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, 0, 0);
-
-        gl.bind_buffer(glow::ARRAY_BUFFER, Some(colors_vbo));
-        gl.enable_vertex_attrib_array(1);
-        gl.vertex_attrib_pointer_f32(1, 3, glow::FLOAT, false, 0, 0);
-        vao
-    }
-}
-
-unsafe fn create_buffer(gl: &glow::Context, data: &[f32]) -> glow::NativeBuffer {
+    // We need a raw byte slice over the vertex data for uploading to the GPU
     let vertices_u8: &[u8] = unsafe {
         core::slice::from_raw_parts(
-            data.as_ptr() as *const u8,
-            data.len() * core::mem::size_of::<f32>(),
+            vertices.as_ptr() as *const u8,
+            vertices.len() * BYTES_PER_VERTEX,
         )
     };
 
     unsafe {
-        let vbo = gl.create_buffer().unwrap();
-        gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
+        // We construct a buffer and upload the data
+        let vertex_buffer = gl.create_buffer().unwrap();
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(vertex_buffer));
         gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, vertices_u8, glow::STATIC_DRAW);
-        vbo
+
+        // We now construct a vertex array to describe the format of the buffer
+        let vertex_array = gl.create_vertex_array().unwrap();
+        gl.bind_vertex_array(Some(vertex_array));
+
+        // Point attribute zero to the position data in the buffer
+        gl.vertex_attrib_pointer_f32(
+            0,
+            NUM_POSITION_COMPONENTS,
+            glow::FLOAT,
+            false,
+            BYTES_PER_VERTEX as i32,
+            core::mem::offset_of!(Vertex, position) as i32,
+        );
+        // Activate attribute zero in the array
+        gl.enable_vertex_attrib_array(0);
+
+        // Point attribute one to the color data in the buffer
+        gl.vertex_attrib_pointer_f32(
+            1,
+            NUM_COLOR_COMPONENTS,
+            glow::FLOAT,
+            false,
+            BYTES_PER_VERTEX as i32,
+            core::mem::offset_of!(Vertex, color) as i32,
+        );
+        // Activate attribute one in the array
+        gl.enable_vertex_attrib_array(1);
+        vertex_array
     }
 }
 
@@ -326,8 +325,6 @@ impl RotatingTriangle {
     fn paint(&self, gl: &glow::Context, angle: f32) {
         use glow::HasContext as _;
         unsafe {
-            gl.clear_color(0.6, 0.6, 0.6, 1.0);
-            gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
             gl.use_program(Some(self.program));
             gl.uniform_1_f32(
                 gl.get_uniform_location(self.program, "u_angle").as_ref(),
