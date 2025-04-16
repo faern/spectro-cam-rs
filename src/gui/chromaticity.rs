@@ -9,11 +9,13 @@
 //!
 //!
 
+use colorimetry::{observer::Observer, xyz::XYZ};
 use eframe::{
     egui, egui_glow,
     glow::{self, HasContext},
 };
 use egui::mutex::Mutex;
+use nalgebra::Vector3;
 use std::sync::Arc;
 
 pub struct ChromaticityWindow {
@@ -273,6 +275,110 @@ impl RotatingTriangle {
             });
         }
         vertices
+    }
+
+    // fn compute_chromaticity_diagram_vertices(
+    //     color_space: &'static ColorSpaceRGB<f32>,
+    // ) -> (VertexBuffer<Vertex>, IndexBuffer<u32>) {
+    //     const BOTTOM_EDGE_RESOLUTION: u16 = 100;
+
+    //     let spectrum = crate::colorimetry::SpectrumColors::new(&CIE_1931_2_DEGREE);
+
+    //     let mut outer_edge_vertexes = Vec::new();
+    //     for wavelength in CHROMATICITY_SPECTRUM_WAVELENGTH_RANGE.rev() {
+    //         let spectrum_xyz = spectrum.wavelength_to_xyz(wavelength as f32).normalized();
+    //         let spectrum_xyy = XYYf32::from_xyz(spectrum_xyz);
+
+    //         outer_edge_vertexes.push(Vec2::new(spectrum_xyy.x, spectrum_xyy.y));
+    //     }
+    //     let bottom_edge_start = *outer_edge_vertexes.last().unwrap();
+    //     let bottom_edge_end = *outer_edge_vertexes.first().unwrap();
+    //     let bottom_edge_diff = bottom_edge_end - bottom_edge_start;
+    //     for i in 1..BOTTOM_EDGE_RESOLUTION {
+    //         let ratio = i as f32 / BOTTOM_EDGE_RESOLUTION as f32;
+    //         let bottom_edge_vector = bottom_edge_start + bottom_edge_diff * ratio;
+    //         outer_edge_vertexes.push(bottom_edge_vector);
+    //     }
+
+    //     let xy_to_rgb = crate::colorimetry::Xy2Rgb::new(color_space);
+    //     let center = Vec2::new(color_space.white.x, color_space.white.y);
+    //     Self::compute_gl_triangle_strip_from_ring(context, &outer_edge_vertexes, center, &xy_to_rgb)
+    // }
+
+    // fn compute_gl_triangle_strip_from_ring(
+    //     context: &Rc<glium::backend::Context>,
+    //     outer_ring: &[Vec2],
+    //     center: Vec2,
+    //     xy_to_rgb: &crate::colorimetry::Xy2Rgb<f32>,
+    // ) -> (VertexBuffer<Vertex>, IndexBuffer<u32>) {
+    //     const STEPS_TO_CENTER: u32 = 50;
+
+    //     let items_per_ring = u32::try_from(outer_ring.len()).unwrap();
+    //     // The index in the `vertices` vector that the last vertex (the center point)
+    //     // will have. It's added last, after the loop below.
+    //     let index_of_center_vertex = STEPS_TO_CENTER * items_per_ring;
+
+    //     let mut vertices = Vec::new();
+    //     // The list of indices into `vertices` to draw the triangle strip from.
+    //     // Starts out with with index of the last vertice in the outermost ring (
+    //     // will be added at the last step the first time the inner for loop runs)
+    //     let mut indices = vec![items_per_ring - 1];
+    //     for ring_i in 0..STEPS_TO_CENTER {
+    //         let center_ratio = ring_i as f32 / STEPS_TO_CENTER as f32;
+    //         for (i, ring_vertex) in outer_ring.iter().copied().enumerate() {
+    //             let vertex = ring_vertex + (center - ring_vertex) * center_ratio;
+    //             vertices.push(Self::vec_to_vertex(vertex, xy_to_rgb));
+
+    //             let i = u32::try_from(i).unwrap();
+    //             // Draw a triangle to the vertice we just pushed above
+    //             indices.push(ring_i * items_per_ring + i);
+    //             // Draw a triangle to the corresponding vertice in the next ring, or the
+    //             // center point if we are on the last ring
+    //             indices.push(if ring_i < STEPS_TO_CENTER - 1 {
+    //                 (ring_i + 1) * items_per_ring + i
+    //             } else {
+    //                 index_of_center_vertex
+    //             });
+    //         }
+    //     }
+    //     vertices.push(Self::vec_to_vertex(center, xy_to_rgb));
+
+    //     let vertex_buffer = VertexBuffer::immutable(context, &vertices).unwrap();
+    //     let index_buffer = IndexBuffer::immutable(
+    //         context,
+    //         glium::index::PrimitiveType::TriangleStrip,
+    //         &indices,
+    //     )
+    //     .unwrap();
+    //     (vertex_buffer, index_buffer)
+    // }
+
+    // fn vec_to_vertex(vec: Vec2, xy_to_rgb: &colorimetry::Xy2Rgb<f32>) -> Vertex {
+    //     let xy_to_rgb = |x: f32, y: f32| -> [f32; 3] {
+    //         let rgb = xy_to_rgb.xy_to_display_referred_linear_rgb(x, y);
+    //         [rgb.r, rgb.g, rgb.b]
+    //     };
+    //     // let xy_to_rgb = |x: f32, y: f32| -> [f32; 3] {
+    //     //     let xyy = palette::Yxy::new(x, y, 0.5);
+    //     //     let rgb = palette::Srgb::from_color(xyy);
+    //     //     [rgb.red, rgb.green, rgb.blue]
+    //     // };
+    //     let color = xy_to_rgb(vec.x, vec.y);
+    //     Vertex {
+    //         position: [vec.x, vec.y],
+    //         color,
+    //     }
+    // }
+
+    /// Converts xy chromaticity coordinates to RGB values.
+    fn xy_to_rgb(x: f64, y: f64, observer: Observer) -> [f32; 3] {
+        let colorspace = colorimetry::rgbspace::RgbSpace::SRGB;
+        let xyz = XYZ::try_from_chromaticity(x, y, None, Some(observer)).unwrap();
+        let rgb = xyz.rgb(Some(colorspace));
+        let rgb_vec_f64: Vector3<f64> = *rgb.as_ref();
+        let rgb_vec_f32 = rgb_vec_f64.cast::<f32>();
+        let rgb_array = <Vector3<f32> as AsRef<[f32; 3]>>::as_ref(&rgb_vec_f32);
+        *rgb_array
     }
 }
 
