@@ -936,6 +936,38 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b63caa9aa9397e2d9480a9b13673856c78d8ac123288526c37d7839f2a86990"
 
 [[package]]
+name = "colored"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
+dependencies = [
+ "lazy_static",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "colorimetry"
+version = "0.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "020a7414825af4b373324ed0852b90bcc8fc8bb5cff2943871defc2eafdc5577"
+dependencies = [
+ "approx",
+ "colored",
+ "js-sys",
+ "libm",
+ "nalgebra",
+ "num-traits",
+ "once_cell",
+ "paste",
+ "strum",
+ "strum_macros",
+ "thiserror 1.0.69",
+ "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
 name = "combine"
 version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3964,6 +3996,7 @@ version = "0.2.0"
 dependencies = [
  "approx",
  "biquad",
+ "colorimetry",
  "criterion",
  "csv",
  "eframe",

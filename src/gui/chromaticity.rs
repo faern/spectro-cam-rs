@@ -337,6 +337,24 @@ impl RotatingTriangle {
             gl.draw_arrays(glow::TRIANGLES, 0, 3);
         }
     }
+
+    fn compute_chromaticity_diagram_outline_vertices() -> Vec<Vertex> {
+        use colorimetry::data::observers::CIE1931;
+        let mut vertices = Vec::new();
+        for wavelength in 380..=780 {
+            let spectrum = colorimetry::Spectrum::band_filter(wavelength as f64, 1.0);
+            // Compute tristimulus values for the monochromatic spectrum
+            let xyz = CIE1931.xyz(&spectrum, None);
+            // Compute the chromaticity coordinates
+            let (x, y) = xyz.chromaticity();
+
+            vertices.push(Vertex {
+                position: [x as f32, y as f32],
+                color: [1.0, 1.0, 1.0],
+            });
+        }
+        vertices
+    }
 }
 
 impl Drop for RotatingTriangle {
