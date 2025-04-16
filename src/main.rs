@@ -25,7 +25,7 @@ fn main() -> eframe::Result {
 
     let native_options = eframe::NativeOptions {
         // Multisampling (anti-aliasing) makes the UI look smoother
-        multisampling: 2,
+        multisampling: 4,
         renderer: eframe::Renderer::Glow,
         ..Default::default()
     };

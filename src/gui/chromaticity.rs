@@ -32,17 +32,9 @@ impl ChromaticityWindow {
         egui::Window::new("Chromaticity")
             .open(show)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
-                    ui.label("The triangle is being painted using ");
-                    ui.hyperlink_to("glow", "https://github.com/grovesNL/glow");
-                    ui.label(" (OpenGL).");
-                });
-
                 egui::Frame::canvas(ui.style()).show(ui, |ui| {
                     self.custom_painting(ui);
                 });
-                ui.label("Drag to rotate!");
             });
     }
 
@@ -62,84 +54,6 @@ impl ChromaticityWindow {
         ui.painter().add(callback);
     }
 }
-
-// struct ChromaticityDiagram {
-//     gl: Arc<glow::Context>,
-//     program: glow::NativeProgram,
-//     vertex_array: glow::VertexArray,
-// }
-
-// impl ChromaticityDiagram {
-//     fn new(gl: Arc<glow::Context>) -> Self {
-//         let vertex_shader_source = "
-//             #version 150
-
-//             uniform mat4 matrix;
-//             in vec2 position;
-//             in vec3 color;
-//             out vec3 vColor;
-
-//             void main() {
-//                 gl_Position = vec4(position, 0.0, 1.0) * matrix;
-//                 vColor = color;
-//             }
-//         ";
-//         let fragment_shader_source = "
-//             #version 150
-
-//             in vec3 vColor;
-//             out vec4 f_color;
-
-//             void main() {
-//                 f_color = vec4(vColor, 1.0);
-//             }
-//         ";
-
-//         let program =
-//             unsafe { create_program(gl.as_ref(), vertex_shader_source, fragment_shader_source) };
-
-//         let outline_vertex_buffer = VertexBuffer::new(
-//             &context,
-//             &Self::compute_chromaticity_diagram_outline_vertices(),
-//         )
-//         .unwrap();
-
-//         let vertex_array = unsafe {
-//             gl.create_vertex_array()
-//                 .expect("Cannot create vertex array")
-//         };
-
-//         Self {
-//             gl,
-//             program,
-//             vertex_array,
-//         }
-//     }
-
-//     // fn compute_chromaticity_diagram_outline_vertices() -> Vec<Vertex> {
-//     //     let cmf = &colorspace::cmf::CIE_1931_2_DEGREE;
-
-//     //     let cmf_x = InterpolatorLinear::new(&cmf.x_bar);
-//     //     let cmf_y = InterpolatorLinear::new(&cmf.y_bar);
-//     //     let cmf_z = InterpolatorLinear::new(&cmf.z_bar);
-
-//     //     let mut vertices = Vec::new();
-//     //     for wavelength in 380..=700 {
-//     //         let xyz = XYZf64 {
-//     //             x: cmf_x.evaluate(wavelength as f64),
-//     //             y: cmf_y.evaluate(wavelength as f64),
-//     //             z: cmf_z.evaluate(wavelength as f64),
-//     //         };
-//     //         let xyy = XYYf64::from_xyz(xyz);
-
-//     //         vertices.push(Vertex {
-//     //             position: [xyy.x as f32, xyy.y as f32],
-//     //             color: [0.0, 0.0, 0.0],
-//     //         });
-//     //     }
-//     //     vertices
-//     // }
-// }
 
 #[derive(Debug, Copy, Clone)]
 #[repr(C)]
@@ -273,6 +187,8 @@ impl RotatingTriangle {
 
                 void main() {
                     gl_Position = vec4(position, 0.0, 1.0);
+                    gl_Position.x = gl_Position.x * 2.2 - 0.8;
+                    gl_Position.y = gl_Position.y * 2.2 - 0.9;
                     v_color = vec4(color, 1.0);
                 }
             "#,
@@ -298,20 +214,21 @@ impl RotatingTriangle {
             unsafe { gl.get_attrib_location(program, "position") }.unwrap();
         let color_attribute_index = unsafe { gl.get_attrib_location(program, "color") }.unwrap();
 
-        let vertices = [
-            Vertex {
-                position: [0.0, 1.0],
-                color: [1.0, 0.0, 0.0],
-            },
-            Vertex {
-                position: [-1.0, -1.0],
-                color: [0.0, 1.0, 0.0],
-            },
-            Vertex {
-                position: [1.0, -1.0],
-                color: [0.0, 0.0, 1.0],
-            },
-        ];
+        // let vertices = [
+        //     Vertex {
+        //         position: [0.0, 1.0],
+        //         color: [1.0, 0.0, 0.0],
+        //     },
+        //     Vertex {
+        //         position: [-1.0, -1.0],
+        //         color: [0.0, 1.0, 0.0],
+        //     },
+        //     Vertex {
+        //         position: [1.0, -1.0],
+        //         color: [0.0, 0.0, 1.0],
+        //     },
+        // ];
+        let vertices = Self::compute_chromaticity_diagram_outline_vertices();
 
         let vertex_array = unsafe {
             create_vertex_buffer(
@@ -334,19 +251,21 @@ impl RotatingTriangle {
         unsafe {
             gl.use_program(Some(self.program));
             gl.bind_vertex_array(Some(self.vertex_array));
-            gl.draw_arrays(glow::TRIANGLES, 0, 3);
+            gl.draw_arrays(glow::LINE_LOOP, 0, 320);
         }
     }
 
     fn compute_chromaticity_diagram_outline_vertices() -> Vec<Vertex> {
-        use colorimetry::data::observers::CIE1931;
+        let observer = &colorimetry::data::observers::CIE1931;
+        let planckian_locus_min_wavelength = observer.spectral_locus_nm_min();
+        let planckian_locus_max_wavelength = observer.spectral_locus_nm_max();
+
         let mut vertices = Vec::new();
-        for wavelength in 380..=780 {
-            let spectrum = colorimetry::Spectrum::band_filter(wavelength as f64, 1.0);
+        for wavelength in planckian_locus_min_wavelength..=planckian_locus_max_wavelength {
             // Compute tristimulus values for the monochromatic spectrum
-            let xyz = CIE1931.xyz(&spectrum, None);
+            let xyz = observer.spectral_locus_by_nm(wavelength).unwrap();
             // Compute the chromaticity coordinates
-            let (x, y) = xyz.chromaticity();
+            let [x, y] = xyz.chromaticity();
 
             vertices.push(Vertex {
                 position: [x as f32, y as f32],
