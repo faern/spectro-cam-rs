@@ -375,10 +375,10 @@ impl RotatingTriangle {
         let colorspace = colorimetry::rgbspace::RgbSpace::SRGB;
         let xyz = XYZ::try_from_chromaticity(x, y, None, Some(observer)).unwrap();
         let rgb = xyz.rgb(Some(colorspace));
-        let rgb_vec_f64: Vector3<f64> = *rgb.as_ref();
-        let rgb_vec_f32 = rgb_vec_f64.cast::<f32>();
-        let rgb_array = <Vector3<f32> as AsRef<[f32; 3]>>::as_ref(&rgb_vec_f32);
-        *rgb_array
+        // let rgb_vec_f64: Vector3<f64> = *rgb.as_ref();
+        // let rgb_vec_f32 = rgb_vec_f64.cast::<f32>();
+        // let rgb_array = <Vector3<f32> as AsRef<[f32; 3]>>::as_ref(&rgb_vec_f32);
+        rgb.values().map(|v| v as f32)
     }
 }
 
