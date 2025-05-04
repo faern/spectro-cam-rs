@@ -9,24 +9,24 @@
 //!
 //!
 
-use colorimetry::{observer::Observer, xyz::XYZ};
+use colorimetry::{data::illuminants::D65, observer::Observer, xyz::XYZ};
 use eframe::{
     egui, egui_glow,
     glow::{self, HasContext},
 };
 use egui::mutex::Mutex;
-use nalgebra::Vector3;
+use nalgebra::Vector2;
 use std::sync::Arc;
 
 pub struct ChromaticityWindow {
     /// Behind an `Arc<Mutex<…>>` so we can pass it to [`egui::PaintCallback`] and paint later.
-    rotating_triangle: Arc<Mutex<RotatingTriangle>>,
+    rotating_triangle: Arc<Mutex<ChromaticityDiagram>>,
 }
 
 impl ChromaticityWindow {
     pub fn new(gl: Arc<glow::Context>) -> Self {
         Self {
-            rotating_triangle: Arc::new(Mutex::new(RotatingTriangle::new(gl))),
+            rotating_triangle: Arc::new(Mutex::new(ChromaticityDiagram::new(gl))),
         }
     }
 
@@ -126,6 +126,23 @@ unsafe fn create_vertex_buffer(
     }
 }
 
+fn create_index_buffer(gl: &glow::Context, indices: &[u32]) -> glow::NativeBuffer {
+    const BYTES_PER_INDEX: usize = core::mem::size_of::<u32>();
+
+    let indices_u8: &[u8] = unsafe {
+        core::slice::from_raw_parts(
+            indices.as_ptr() as *const u8,
+            indices.len() * BYTES_PER_INDEX,
+        )
+    };
+    unsafe {
+        let index_buffer = gl.create_buffer().unwrap();
+        gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(index_buffer));
+        gl.buffer_data_u8_slice(glow::ELEMENT_ARRAY_BUFFER, indices_u8, glow::STATIC_DRAW);
+        index_buffer
+    }
+}
+
 unsafe fn create_program(
     gl: &glow::Context,
     vertex_shader_source: &str,
@@ -168,13 +185,16 @@ unsafe fn create_program(
     }
 }
 
-struct RotatingTriangle {
+struct ChromaticityDiagram {
     gl: Arc<glow::Context>,
     program: glow::Program,
-    vertex_array: glow::VertexArray,
+    outline_vertex_array: glow::VertexArray,
+    chromaticity_diagram_vertex_array: glow::VertexArray,
+    chromaticity_diagram_index_buffer: glow::NativeBuffer,
+    chromaticity_diagram_num_elements: usize,
 }
 
-impl RotatingTriangle {
+impl ChromaticityDiagram {
     fn new(gl: Arc<glow::Context>) -> Self {
         let (vertex_shader_source, fragment_shader_source) = (
             r#"
@@ -216,56 +236,86 @@ impl RotatingTriangle {
             unsafe { gl.get_attrib_location(program, "position") }.unwrap();
         let color_attribute_index = unsafe { gl.get_attrib_location(program, "color") }.unwrap();
 
-        // let vertices = [
-        //     Vertex {
-        //         position: [0.0, 1.0],
-        //         color: [1.0, 0.0, 0.0],
-        //     },
-        //     Vertex {
-        //         position: [-1.0, -1.0],
-        //         color: [0.0, 1.0, 0.0],
-        //     },
-        //     Vertex {
-        //         position: [1.0, -1.0],
-        //         color: [0.0, 0.0, 1.0],
-        //     },
-        // ];
-        let vertices = Self::compute_chromaticity_diagram_outline_vertices();
+        let observer = colorimetry::observer::Observer::Std1931;
+        let outline_vertices = Self::compute_chromaticity_diagram_outline_vertices(observer);
 
-        let vertex_array = unsafe {
+        let outline_vertex_array = unsafe {
             create_vertex_buffer(
                 &gl,
-                &vertices,
+                &outline_vertices,
                 position_attribute_index,
                 color_attribute_index,
             )
         };
 
+        let chromaticity_diagram_outline_positions = Self::chromaticity_diagram_outline_positions();
+        let [center_x, center_y] = D65.xyz(Some(observer)).chromaticity();
+        let center = Vector2::new(center_x, center_y);
+        let (chromaticity_diagram_vertices, chromaticity_diagram_indices) =
+            Self::compute_gl_triangle_strip_from_ring(
+                &chromaticity_diagram_outline_positions,
+                center,
+                observer,
+            );
+
+        println!(
+            "NUMBER OF VERTICE INDICES: {}",
+            chromaticity_diagram_indices.len()
+        );
+
+        let chromaticity_diagram_vertex_array = unsafe {
+            create_vertex_buffer(
+                &gl,
+                &chromaticity_diagram_vertices,
+                position_attribute_index,
+                color_attribute_index,
+            )
+        };
+        let chromaticity_diagram_index_buffer =
+            create_index_buffer(&gl, &chromaticity_diagram_indices);
+
         Self {
             gl,
             program,
-            vertex_array,
+            outline_vertex_array,
+            chromaticity_diagram_vertex_array,
+            chromaticity_diagram_index_buffer,
+            chromaticity_diagram_num_elements: chromaticity_diagram_indices.len(),
         }
     }
 
     fn paint(&self, gl: &glow::Context) {
         use glow::HasContext as _;
         unsafe {
+            gl.clear_color(0.1, 0.1, 0.1, 1.0);
+            gl.clear(glow::DEPTH_BUFFER_BIT | glow::COLOR_BUFFER_BIT);
+
             gl.use_program(Some(self.program));
-            gl.bind_vertex_array(Some(self.vertex_array));
-            gl.draw_arrays(glow::LINE_LOOP, 0, 320);
+            // gl.bind_vertex_array(Some(self.outline_vertex_array));
+            // gl.draw_arrays(glow::LINE_LOOP, 0, 320);
+
+            gl.bind_vertex_array(Some(self.chromaticity_diagram_vertex_array));
+            gl.bind_buffer(
+                glow::ELEMENT_ARRAY_BUFFER,
+                Some(self.chromaticity_diagram_index_buffer),
+            );
+            gl.draw_elements(
+                glow::TRIANGLE_STRIP,
+                self.chromaticity_diagram_num_elements as i32,
+                glow::UNSIGNED_INT,
+                0,
+            );
         }
     }
 
-    fn compute_chromaticity_diagram_outline_vertices() -> Vec<Vertex> {
-        let observer = &colorimetry::data::observers::CIE1931;
-        let planckian_locus_min_wavelength = observer.spectral_locus_nm_min();
-        let planckian_locus_max_wavelength = observer.spectral_locus_nm_max();
+    fn compute_chromaticity_diagram_outline_vertices(observer: Observer) -> Vec<Vertex> {
+        let planckian_locus_min_wavelength = observer.data().spectral_locus_nm_min();
+        let planckian_locus_max_wavelength = observer.data().spectral_locus_nm_max();
 
         let mut vertices = Vec::new();
         for wavelength in planckian_locus_min_wavelength..=planckian_locus_max_wavelength {
             // Compute tristimulus values for the monochromatic spectrum
-            let xyz = observer.spectral_locus_by_nm(wavelength).unwrap();
+            let xyz = observer.data().spectral_locus_by_nm(wavelength).unwrap();
             // Compute the chromaticity coordinates
             let [x, y] = xyz.chromaticity();
 
@@ -277,103 +327,87 @@ impl RotatingTriangle {
         vertices
     }
 
-    // fn compute_chromaticity_diagram_vertices(
-    //     color_space: &'static ColorSpaceRGB<f32>,
-    // ) -> (VertexBuffer<Vertex>, IndexBuffer<u32>) {
-    //     const BOTTOM_EDGE_RESOLUTION: u16 = 100;
+    fn chromaticity_diagram_outline_positions() -> Vec<Vector2<f64>> {
+        const BOTTOM_EDGE_RESOLUTION: u16 = 100;
 
-    //     let spectrum = crate::colorimetry::SpectrumColors::new(&CIE_1931_2_DEGREE);
+        let observer = colorimetry::observer::Observer::Std1931;
+        let planckian_locus_min_wavelength = observer.data().spectral_locus_nm_min();
+        let planckian_locus_max_wavelength = observer.data().spectral_locus_nm_max();
 
-    //     let mut outer_edge_vertexes = Vec::new();
-    //     for wavelength in CHROMATICITY_SPECTRUM_WAVELENGTH_RANGE.rev() {
-    //         let spectrum_xyz = spectrum.wavelength_to_xyz(wavelength as f32).normalized();
-    //         let spectrum_xyy = XYYf32::from_xyz(spectrum_xyz);
+        let mut outer_edge_vertexes = Vec::new();
+        for wavelength in planckian_locus_min_wavelength..=planckian_locus_max_wavelength {
+            // Compute tristimulus values for the monochromatic spectrum
+            let xyz = observer.data().spectral_locus_by_nm(wavelength).unwrap();
+            // Compute the chromaticity coordinates
+            let [x, y] = xyz.chromaticity();
 
-    //         outer_edge_vertexes.push(Vec2::new(spectrum_xyy.x, spectrum_xyy.y));
-    //     }
-    //     let bottom_edge_start = *outer_edge_vertexes.last().unwrap();
-    //     let bottom_edge_end = *outer_edge_vertexes.first().unwrap();
-    //     let bottom_edge_diff = bottom_edge_end - bottom_edge_start;
-    //     for i in 1..BOTTOM_EDGE_RESOLUTION {
-    //         let ratio = i as f32 / BOTTOM_EDGE_RESOLUTION as f32;
-    //         let bottom_edge_vector = bottom_edge_start + bottom_edge_diff * ratio;
-    //         outer_edge_vertexes.push(bottom_edge_vector);
-    //     }
+            outer_edge_vertexes.push(Vector2::new(x, y));
+        }
+        let bottom_edge_start = *outer_edge_vertexes.last().unwrap();
+        let bottom_edge_end = *outer_edge_vertexes.first().unwrap();
+        let bottom_edge_diff = bottom_edge_end - bottom_edge_start;
+        for i in 1..BOTTOM_EDGE_RESOLUTION {
+            let ratio = i as f64 / BOTTOM_EDGE_RESOLUTION as f64;
+            let bottom_edge_vector = bottom_edge_start + bottom_edge_diff * ratio;
+            outer_edge_vertexes.push(bottom_edge_vector);
+        }
+        outer_edge_vertexes
+    }
 
-    //     let xy_to_rgb = crate::colorimetry::Xy2Rgb::new(color_space);
-    //     let center = Vec2::new(color_space.white.x, color_space.white.y);
-    //     Self::compute_gl_triangle_strip_from_ring(context, &outer_edge_vertexes, center, &xy_to_rgb)
-    // }
+    fn compute_gl_triangle_strip_from_ring(
+        outer_ring: &[Vector2<f64>],
+        center: Vector2<f64>,
+        observer: Observer,
+    ) -> (Vec<Vertex>, Vec<u32>) {
+        const STEPS_TO_CENTER: u32 = 50;
 
-    // fn compute_gl_triangle_strip_from_ring(
-    //     context: &Rc<glium::backend::Context>,
-    //     outer_ring: &[Vec2],
-    //     center: Vec2,
-    //     xy_to_rgb: &crate::colorimetry::Xy2Rgb<f32>,
-    // ) -> (VertexBuffer<Vertex>, IndexBuffer<u32>) {
-    //     const STEPS_TO_CENTER: u32 = 50;
+        let items_per_ring = u32::try_from(outer_ring.len()).unwrap();
+        // The index in the `vertices` vector that the last vertex (the center point)
+        // will have. It's added last, after the loop below.
+        let index_of_center_vertex = STEPS_TO_CENTER * items_per_ring;
 
-    //     let items_per_ring = u32::try_from(outer_ring.len()).unwrap();
-    //     // The index in the `vertices` vector that the last vertex (the center point)
-    //     // will have. It's added last, after the loop below.
-    //     let index_of_center_vertex = STEPS_TO_CENTER * items_per_ring;
+        let mut vertices = Vec::new();
+        // The list of indices into `vertices` to draw the triangle strip from.
+        // Starts out with with index of the last vertice in the outermost ring (
+        // will be added at the last step the first time the inner for loop runs)
+        let mut indices = vec![items_per_ring - 1];
+        for ring_i in 0..STEPS_TO_CENTER {
+            let center_ratio = ring_i as f64 / STEPS_TO_CENTER as f64;
+            for (i, ring_vertex) in outer_ring.iter().copied().enumerate() {
+                let vertex = ring_vertex + (center - ring_vertex) * center_ratio;
 
-    //     let mut vertices = Vec::new();
-    //     // The list of indices into `vertices` to draw the triangle strip from.
-    //     // Starts out with with index of the last vertice in the outermost ring (
-    //     // will be added at the last step the first time the inner for loop runs)
-    //     let mut indices = vec![items_per_ring - 1];
-    //     for ring_i in 0..STEPS_TO_CENTER {
-    //         let center_ratio = ring_i as f32 / STEPS_TO_CENTER as f32;
-    //         for (i, ring_vertex) in outer_ring.iter().copied().enumerate() {
-    //             let vertex = ring_vertex + (center - ring_vertex) * center_ratio;
-    //             vertices.push(Self::vec_to_vertex(vertex, xy_to_rgb));
+                vertices.push(Self::chromaticity_to_vertex(vertex, observer));
 
-    //             let i = u32::try_from(i).unwrap();
-    //             // Draw a triangle to the vertice we just pushed above
-    //             indices.push(ring_i * items_per_ring + i);
-    //             // Draw a triangle to the corresponding vertice in the next ring, or the
-    //             // center point if we are on the last ring
-    //             indices.push(if ring_i < STEPS_TO_CENTER - 1 {
-    //                 (ring_i + 1) * items_per_ring + i
-    //             } else {
-    //                 index_of_center_vertex
-    //             });
-    //         }
-    //     }
-    //     vertices.push(Self::vec_to_vertex(center, xy_to_rgb));
+                let i = u32::try_from(i).unwrap();
+                // Draw a triangle to the vertice we just pushed above
+                indices.push(ring_i * items_per_ring + i);
+                // Draw a triangle to the corresponding vertice in the next ring, or the
+                // center point if we are on the last ring
+                indices.push(if ring_i < STEPS_TO_CENTER - 1 {
+                    (ring_i + 1) * items_per_ring + i
+                } else {
+                    index_of_center_vertex
+                });
+            }
+        }
+        vertices.push(Self::chromaticity_to_vertex(center, observer));
 
-    //     let vertex_buffer = VertexBuffer::immutable(context, &vertices).unwrap();
-    //     let index_buffer = IndexBuffer::immutable(
-    //         context,
-    //         glium::index::PrimitiveType::TriangleStrip,
-    //         &indices,
-    //     )
-    //     .unwrap();
-    //     (vertex_buffer, index_buffer)
-    // }
+        (vertices, indices)
+    }
 
-    // fn vec_to_vertex(vec: Vec2, xy_to_rgb: &colorimetry::Xy2Rgb<f32>) -> Vertex {
-    //     let xy_to_rgb = |x: f32, y: f32| -> [f32; 3] {
-    //         let rgb = xy_to_rgb.xy_to_display_referred_linear_rgb(x, y);
-    //         [rgb.r, rgb.g, rgb.b]
-    //     };
-    //     // let xy_to_rgb = |x: f32, y: f32| -> [f32; 3] {
-    //     //     let xyy = palette::Yxy::new(x, y, 0.5);
-    //     //     let rgb = palette::Srgb::from_color(xyy);
-    //     //     [rgb.red, rgb.green, rgb.blue]
-    //     // };
-    //     let color = xy_to_rgb(vec.x, vec.y);
-    //     Vertex {
-    //         position: [vec.x, vec.y],
-    //         color,
-    //     }
-    // }
+    fn chromaticity_to_vertex(chromaticity: Vector2<f64>, observer: Observer) -> Vertex {
+        let color = Self::xy_to_rgb(chromaticity, observer);
+        Vertex {
+            position: [chromaticity.x as f32, chromaticity.y as f32],
+            color,
+        }
+    }
 
     /// Converts xy chromaticity coordinates to RGB values.
-    fn xy_to_rgb(x: f64, y: f64, observer: Observer) -> [f32; 3] {
+    fn xy_to_rgb(chromaticity: Vector2<f64>, observer: Observer) -> [f32; 3] {
         let colorspace = colorimetry::rgbspace::RgbSpace::SRGB;
-        let xyz = XYZ::try_from_chromaticity(x, y, None, Some(observer)).unwrap();
+        let xyz = XYZ::try_from_chromaticity(chromaticity.x, chromaticity.y, None, Some(observer))
+            .unwrap();
         let rgb = xyz.rgb(Some(colorspace));
         // let rgb_vec_f64: Vector3<f64> = *rgb.as_ref();
         // let rgb_vec_f32 = rgb_vec_f64.cast::<f32>();
@@ -382,12 +416,16 @@ impl RotatingTriangle {
     }
 }
 
-impl Drop for RotatingTriangle {
+impl Drop for ChromaticityDiagram {
     fn drop(&mut self) {
         use glow::HasContext as _;
         unsafe {
             self.gl.delete_program(self.program);
-            self.gl.delete_vertex_array(self.vertex_array);
+            self.gl.delete_vertex_array(self.outline_vertex_array);
+            self.gl
+                .delete_vertex_array(self.chromaticity_diagram_vertex_array);
+            self.gl
+                .delete_buffer(self.chromaticity_diagram_index_buffer);
         };
     }
 }
