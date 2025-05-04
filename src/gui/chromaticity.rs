@@ -35,14 +35,14 @@ impl ChromaticityWindow {
             .open(show)
             .show(ctx, |ui| {
                 egui::Frame::canvas(ui.style()).show(ui, |ui| {
+                    ui.set_min_size(egui::Vec2::splat(300.0));
                     self.custom_painting(ui);
                 });
             });
     }
 
     fn custom_painting(&mut self, ui: &mut egui::Ui) {
-        let (rect, _response) =
-            ui.allocate_exact_size(egui::Vec2::splat(300.0), egui::Sense::drag());
+        let (rect, _response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::drag());
 
         // Clone locals so we can move them into the paint callback:
         let rotating_triangle = self.rotating_triangle.clone();
