@@ -328,7 +328,7 @@ impl ChromaticityDiagram {
     }
 
     fn chromaticity_diagram_outline_positions() -> Vec<Vector2<f64>> {
-        const BOTTOM_EDGE_RESOLUTION: u16 = 100;
+        const BOTTOM_EDGE_RESOLUTION: u16 = 70;
 
         let observer = colorimetry::observer::Observer::Std1931;
         let planckian_locus_min_wavelength = observer.data().spectral_locus_nm_min();
@@ -359,7 +359,7 @@ impl ChromaticityDiagram {
         center: Vector2<f64>,
         observer: Observer,
     ) -> (Vec<Vertex>, Vec<u32>) {
-        const STEPS_TO_CENTER: u32 = 50;
+        const STEPS_TO_CENTER: u32 = 40;
 
         let items_per_ring = u32::try_from(outer_ring.len()).unwrap();
         // The index in the `vertices` vector that the last vertex (the center point)
