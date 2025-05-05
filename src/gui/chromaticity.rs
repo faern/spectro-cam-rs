@@ -9,7 +9,11 @@
 //!
 //!
 
-use colorimetry::{data::illuminants::D65, observer::Observer, xyz::XYZ};
+use colorimetry::observer::Observer;
+use colorimetry::rgbspace::RgbSpace;
+use colorimetry::std_illuminants::StdIlluminant;
+use colorimetry::xyz::XYZ;
+use colorimetry::{data::illuminants::D65, traits::Light};
 use eframe::{
     egui, egui_glow,
     glow::{self, HasContext},
@@ -69,7 +73,7 @@ struct Vertex {
 /// This first allocates a vertex buffer object (VBO) and uploads the vertex data to the GPU.
 /// Then it creates a vertex array object (VAO) and binds the VBO to it with VAO attribute
 /// zero pointing to the position data and VAO attribute one pointing to the color data.
-unsafe fn create_vertex_buffer(
+fn create_vertex_buffer(
     gl: &glow::Context,
     vertices: &[Vertex],
     position_attribute_index: u32,
@@ -192,6 +196,8 @@ struct ChromaticityDiagram {
     chromaticity_diagram_vertex_array: glow::VertexArray,
     chromaticity_diagram_index_buffer: glow::NativeBuffer,
     chromaticity_diagram_num_elements: usize,
+    srgb_gamut_vertex_array: glow::VertexArray,
+    d65_light_cross: glow::VertexArray,
 }
 
 impl ChromaticityDiagram {
@@ -239,14 +245,12 @@ impl ChromaticityDiagram {
         let observer = colorimetry::observer::Observer::Std1931;
         let outline_vertices = Self::compute_chromaticity_diagram_outline_vertices(observer);
 
-        let outline_vertex_array = unsafe {
-            create_vertex_buffer(
-                &gl,
-                &outline_vertices,
-                position_attribute_index,
-                color_attribute_index,
-            )
-        };
+        let outline_vertex_array = create_vertex_buffer(
+            &gl,
+            &outline_vertices,
+            position_attribute_index,
+            color_attribute_index,
+        );
 
         let chromaticity_diagram_outline_positions = Self::chromaticity_diagram_outline_positions();
         let [center_x, center_y] = D65.xyz(Some(observer)).chromaticity();
@@ -263,16 +267,28 @@ impl ChromaticityDiagram {
             chromaticity_diagram_indices.len()
         );
 
-        let chromaticity_diagram_vertex_array = unsafe {
-            create_vertex_buffer(
-                &gl,
-                &chromaticity_diagram_vertices,
-                position_attribute_index,
-                color_attribute_index,
-            )
-        };
+        let chromaticity_diagram_vertex_array = create_vertex_buffer(
+            &gl,
+            &chromaticity_diagram_vertices,
+            position_attribute_index,
+            color_attribute_index,
+        );
         let chromaticity_diagram_index_buffer =
             create_index_buffer(&gl, &chromaticity_diagram_indices);
+
+        let srgb_gamut_vertex_array = create_vertex_buffer(
+            &gl,
+            &Self::rgb_gamut_vertices(RgbSpace::SRGB),
+            position_attribute_index,
+            color_attribute_index,
+        );
+
+        let d65_light_cross = create_vertex_buffer(
+            &gl,
+            &Self::light_to_vertices_cross(StdIlluminant::D65, observer),
+            position_attribute_index,
+            color_attribute_index,
+        );
 
         Self {
             gl,
@@ -281,6 +297,8 @@ impl ChromaticityDiagram {
             chromaticity_diagram_vertex_array,
             chromaticity_diagram_index_buffer,
             chromaticity_diagram_num_elements: chromaticity_diagram_indices.len(),
+            srgb_gamut_vertex_array,
+            d65_light_cross,
         }
     }
 
@@ -305,7 +323,77 @@ impl ChromaticityDiagram {
                 glow::UNSIGNED_INT,
                 0,
             );
+
+            gl.bind_vertex_array(Some(self.srgb_gamut_vertex_array));
+            gl.line_width(1.5);
+            gl.draw_arrays(glow::LINE_LOOP, 0, 3);
+
+            gl.bind_vertex_array(Some(self.d65_light_cross));
+            gl.line_width(2.0);
+            gl.draw_arrays(glow::LINES, 0, 8);
         }
+    }
+
+    fn rgb_gamut_vertices(rgb_space: RgbSpace) -> [Vertex; 3] {
+        let [red, green, blue] = rgb_space.primaries_chromaticity();
+        [
+            Vertex {
+                position: red.map(|v| v as f32),
+                color: [0.0, 0.0, 0.0],
+            },
+            Vertex {
+                position: green.map(|v| v as f32),
+                color: [0.0, 0.0, 0.0],
+            },
+            Vertex {
+                position: blue.map(|v| v as f32),
+                color: [0.0, 0.0, 0.0],
+            },
+        ]
+    }
+
+    fn light_to_vertices_cross(light: impl Light, observer: Observer) -> [Vertex; 8] {
+        const CROSS_OFFEST: f32 = 0.001;
+        const CROSS_SIZE: f32 = 0.005;
+        let [x, y] = light.xyzn(observer, None).chromaticity().map(|v| v as f32);
+        [
+            // Left
+            Vertex {
+                position: [x - CROSS_OFFEST, y],
+                color: [0.0, 0.0, 0.0],
+            },
+            Vertex {
+                position: [x - CROSS_SIZE, y],
+                color: [0.0, 0.0, 0.0],
+            },
+            // Right
+            Vertex {
+                position: [x + CROSS_OFFEST, y],
+                color: [0.0, 0.0, 0.0],
+            },
+            Vertex {
+                position: [x + CROSS_SIZE, y],
+                color: [0.0, 0.0, 0.0],
+            },
+            // Top
+            Vertex {
+                position: [x, y + CROSS_OFFEST],
+                color: [0.0, 0.0, 0.0],
+            },
+            Vertex {
+                position: [x, y + CROSS_SIZE],
+                color: [0.0, 0.0, 0.0],
+            },
+            // Bottom
+            Vertex {
+                position: [x, y - CROSS_OFFEST],
+                color: [0.0, 0.0, 0.0],
+            },
+            Vertex {
+                position: [x, y - CROSS_SIZE],
+                color: [0.0, 0.0, 0.0],
+            },
+        ]
     }
 
     fn compute_chromaticity_diagram_outline_vertices(observer: Observer) -> Vec<Vertex> {
