@@ -936,17 +936,21 @@ checksum = "5b63caa9aa9397e2d9480a9b13673856c78d8ac123288526c37d7839f2a86990"
 
 [[package]]
 name = "colorimetry"
-version = "0.0.6"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec8208816ec079025dc08d417089a4593c3e2b798afefd85f23a21b9605e20b4"
 dependencies = [
  "approx",
  "js-sys",
  "libm",
  "nalgebra",
  "num-traits",
+ "once_cell",
  "strum",
  "strum_macros",
  "thiserror 1.0.69",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
