@@ -9,10 +9,13 @@
 //!
 //!
 
+use crate::config::SpectrumPoint;
+
 use super::opengl_helpers::{
     Vertex, VertexArrayWithBuffer, VertexIndexBuffer, create_index_buffer, create_program,
     create_vertex_buffer,
 };
+use colorimetry::illuminant::Illuminant;
 use colorimetry::observer::Observer;
 use colorimetry::rgb::RGB;
 use colorimetry::rgbspace::RgbSpace;
@@ -29,28 +32,69 @@ use std::sync::Arc;
 pub struct ChromaticityWindow {
     /// Behind an `Arc<Mutex<…>>` so we can pass it to [`egui::PaintCallback`] and paint later.
     chromaticity_diagram: Arc<Mutex<ChromaticityDiagram>>,
+    observer: Observer,
+    colorspace: RgbSpace,
 }
 
 impl ChromaticityWindow {
     pub fn new(gl: Arc<glow::Context>) -> Self {
+        let observer = Observer::Std1931;
+        let colorspace = RgbSpace::SRGB;
         Self {
-            chromaticity_diagram: Arc::new(Mutex::new(ChromaticityDiagram::new(gl))),
+            chromaticity_diagram: Arc::new(Mutex::new(ChromaticityDiagram::new(
+                gl, observer, colorspace,
+            ))),
+            observer,
+            colorspace,
         }
     }
 
-    pub fn update(&mut self, ctx: &egui::Context, show: &mut bool) {
+    pub fn update(&mut self, ctx: &egui::Context, show: &mut bool, spectrum: &[SpectrumPoint]) {
+        // let spectrum = Illuminant::new(Self::parse_spectrum(spectrum));
+        let spectrum = Illuminant::planckian(6500.0);
+        let xyz = spectrum.xyz(Some(self.observer));
+        let [x, y, z] = xyz.values();
+        let chromaticity = xyz.chromaticity();
+        let cri = spectrum.cri().map(|cri| cri.ra()).unwrap_or(f64::NAN);
+
         egui::Window::new("Chromaticity")
             .open(show)
             .show(ctx, |ui| {
                 egui::Frame::canvas(ui.style()).show(ui, |ui| {
-                    ui.set_min_size(egui::Vec2::splat(300.0));
-                    self.custom_painting(ui);
+                    // ui.set_min_size(egui::Vec2::splat(300.0));
+                    self.custom_painting(ui, chromaticity);
+                });
+
+                ui.columns_const(|[col_1, col_2]| {
+                    col_1.label("Tristimulus values: ");
+                    col_1.label("Chromaticity coordinates: ");
+                    col_1.label("CRI: ");
+                    col_2.horizontal(|ui| {
+                        ui.label("X: ");
+                        ui.monospace(format!("{:.3}", x));
+                        ui.label("Y: ");
+                        ui.monospace(format!("{:.3}", y));
+                        ui.label("Z: ");
+                        ui.monospace(format!("{:.3}", z));
+                    });
+                    col_2.horizontal(|ui| {
+                        ui.label("x: ");
+                        ui.monospace(format!("{:.3}", chromaticity[0]));
+                        ui.label("y: ");
+                        ui.monospace(format!("{:.3}", chromaticity[1]));
+                    });
+                    col_2.horizontal(|ui| {
+                        ui.label("Ra: ");
+                        ui.monospace(format!("{:.3}", cri));
+                    });
                 });
             });
     }
 
-    fn custom_painting(&mut self, ui: &mut egui::Ui) {
-        let (rect, _response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::drag());
+    fn custom_painting(&mut self, ui: &mut egui::Ui, chromaticity: [f64; 2]) {
+        // let (rect, _response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::drag());
+        let (rect, _response) =
+            ui.allocate_exact_size(egui::Vec2::splat(300.0), egui::Sense::drag());
 
         // Clone locals so we can move them into the paint callback:
         let chromaticity_diagram = self.chromaticity_diagram.clone();
@@ -58,11 +102,24 @@ impl ChromaticityWindow {
         let callback = egui::PaintCallback {
             rect,
             callback: Arc::new(egui_glow::CallbackFn::new(move |_info, painter| {
-                chromaticity_diagram.lock().paint(painter.gl());
+                chromaticity_diagram
+                    .lock()
+                    .paint(painter.gl(), chromaticity);
             })),
         };
         ui.painter().add(callback);
     }
+
+    // fn parse_spectrum(spectrum: &[SpectrumPoint]) -> colorimetry::spectrum::Spectrum {
+    //     let (wavelengths, values): (Vec<f64>, Vec<f64>) = spectrum
+    //         .iter()
+    //         .map(|s| (f64::from(s.wavelength), f64::from(s.value)))
+    //         .unzip();
+    //     dbg!((wavelengths.len(), values.len()));
+    //     let spectrum =
+    //         colorimetry::spectrum::Spectrum::linear_interpolate(&wavelengths, &values).unwrap();
+    //     spectrum
+    // }
 }
 
 struct ChromaticityDiagram {
@@ -76,7 +133,7 @@ struct ChromaticityDiagram {
 }
 
 impl ChromaticityDiagram {
-    fn new(gl: Arc<glow::Context>) -> Self {
+    fn new(gl: Arc<glow::Context>, observer: Observer, colorspace: RgbSpace) -> Self {
         let (vertex_shader_source, fragment_shader_source) = (
             r#"
                 #version 330
@@ -117,8 +174,6 @@ impl ChromaticityDiagram {
             unsafe { gl.get_attrib_location(program, "position") }.unwrap();
         let color_attribute_index = unsafe { gl.get_attrib_location(program, "color") }.unwrap();
 
-        let observer = Observer::Std1931;
-        let colorspace = RgbSpace::SRGB;
         let outline_vertices = Self::compute_chromaticity_diagram_outline_vertices(observer);
 
         let outline_vertex_buffer = create_vertex_buffer(
@@ -179,7 +234,7 @@ impl ChromaticityDiagram {
         }
     }
 
-    fn paint(&self, gl: &glow::Context) {
+    fn paint(&self, gl: &glow::Context, chromaticity: [f64; 2]) {
         use glow::HasContext as _;
         unsafe {
             // gl.clear_color(0.2, 0.1, 0.1, 1.0);

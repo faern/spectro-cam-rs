@@ -394,8 +394,11 @@ impl SpectrometerGui {
     }
 
     fn draw_chromaticity_window(&mut self, ctx: &Context) {
+        let spectrum = self
+            .spectrum_container
+            .get_spectrum_channel(3, &self.config);
         self.chromaticity_window
-            .update(ctx, &mut self.config.view_config.show_chromaticity_window);
+            .update(ctx, &mut self.config.view_config.show_chromaticity_window, &spectrum);
     }
 
     fn draw_camera_control_window(&mut self, ctx: &Context) {
