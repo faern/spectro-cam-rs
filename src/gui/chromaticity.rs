@@ -117,7 +117,7 @@ impl ChromaticityDiagram {
             unsafe { gl.get_attrib_location(program, "position") }.unwrap();
         let color_attribute_index = unsafe { gl.get_attrib_location(program, "color") }.unwrap();
 
-        let observer = colorimetry::observer::Observer::Std1931;
+        let observer = Observer::Std1931;
         let colorspace = RgbSpace::SRGB;
         let outline_vertices = Self::compute_chromaticity_diagram_outline_vertices(observer);
 
@@ -376,16 +376,27 @@ impl ChromaticityDiagram {
 
     /// Converts xy chromaticity coordinates to OpenGL compatible RGB values.
     fn xy_to_rgb(chromaticity: Vector2<f64>, observer: Observer, colorspace: RgbSpace) -> [f32; 3] {
-        let xyz =
-            XYZ::from_chromaticity(chromaticity.x, chromaticity.y, None, Some(observer)).unwrap();
+        let [mut x, mut y] = [chromaticity.x, chromaticity.y];
+        // For some observers, the chromaticity coordinates along the spectral locus have rounding
+        // errors causing their sum to be greater than 1.0. `XYZ::from_chromaticity` requires that
+        // this sum is <= 1.0. So we fix this by decrementing both x and y until we are Ok.
+        // FIXME: Find a cleaner way, or submit patch to `colorimetry` crate.
+        assert!(x + y <= 1.0 + f64::EPSILON, "Chromaticity coordinates are out of range");
+        while x + y > 1.0 {
+            x = x.next_down();
+            y = y.next_down();
+        }
+        let xyz = XYZ::from_chromaticity(x, y, None, Some(observer)).unwrap();
 
-        let rgb = xyz.rgb(Some(colorspace));
-        let rgb = Self::constrain_rgb_to_gamut(rgb);
+        let wide_rgb = xyz.rgb(Some(colorspace));
+        let rgb = Self::constrain_rgb_to_gamut(wide_rgb);
 
-        rgb.values().map(|v| v as f32)
+        rgb.map(|v| v as f32)
     }
 
-    fn constrain_rgb_to_gamut(rgb: RGB) -> RGB {
+    /// Desaturates and scales down the luminance of the given wide (unconstrained) RGB value
+    /// until all channel values are in the range [0, 1].
+    fn constrain_rgb_to_gamut(rgb: RGB) -> [f64; 3] {
         let [r, g, b] = rgb.values();
         // Amount of white needed to add to get all channels positive
         let w = -r.min(g).min(b).min(0.0);
@@ -396,7 +407,7 @@ impl ChromaticityDiagram {
         // The maximum channel value. Used to scale all channels linearly to the range [0, 1]
         let max = pr.max(pg).max(pb).max(1.0);
 
-        RGB::new(pr / max, pg / max, pb / max, None, None)
+        [pr / max, pg / max, pb / max]
     }
 }
 
