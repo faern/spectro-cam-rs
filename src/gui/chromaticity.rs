@@ -10,6 +10,7 @@
 //!
 
 use colorimetry::observer::Observer;
+use colorimetry::rgb::RGB;
 use colorimetry::rgbspace::RgbSpace;
 use colorimetry::std_illuminants::StdIlluminant;
 use colorimetry::xyz::XYZ;
@@ -243,6 +244,7 @@ impl ChromaticityDiagram {
         let color_attribute_index = unsafe { gl.get_attrib_location(program, "color") }.unwrap();
 
         let observer = colorimetry::observer::Observer::Std1931;
+        let colorspace = RgbSpace::SRGB;
         let outline_vertices = Self::compute_chromaticity_diagram_outline_vertices(observer);
 
         let outline_vertex_array = create_vertex_buffer(
@@ -260,6 +262,7 @@ impl ChromaticityDiagram {
                 &chromaticity_diagram_outline_positions,
                 center,
                 observer,
+                colorspace,
             );
 
         println!(
@@ -446,6 +449,7 @@ impl ChromaticityDiagram {
         outer_ring: &[Vector2<f64>],
         center: Vector2<f64>,
         observer: Observer,
+        colorspace: RgbSpace,
     ) -> (Vec<Vertex>, Vec<u32>) {
         const STEPS_TO_CENTER: u32 = 40;
 
@@ -464,7 +468,7 @@ impl ChromaticityDiagram {
             for (i, ring_vertex) in outer_ring.iter().copied().enumerate() {
                 let vertex = ring_vertex + (center - ring_vertex) * center_ratio;
 
-                vertices.push(Self::chromaticity_to_vertex(vertex, observer));
+                vertices.push(Self::chromaticity_to_vertex(vertex, observer, colorspace));
 
                 let i = u32::try_from(i).unwrap();
                 // Draw a triangle to the vertice we just pushed above
@@ -478,29 +482,47 @@ impl ChromaticityDiagram {
                 });
             }
         }
-        vertices.push(Self::chromaticity_to_vertex(center, observer));
+        vertices.push(Self::chromaticity_to_vertex(center, observer, colorspace));
 
         (vertices, indices)
     }
 
-    fn chromaticity_to_vertex(chromaticity: Vector2<f64>, observer: Observer) -> Vertex {
-        let color = Self::xy_to_rgb(chromaticity, observer);
+    /// Converts a chromaticity coordinate to a vertex with the position and color matching
+    /// the chromaticity coordinate.
+    fn chromaticity_to_vertex(
+        chromaticity: Vector2<f64>,
+        observer: Observer,
+        colorspace: RgbSpace,
+    ) -> Vertex {
         Vertex {
             position: [chromaticity.x as f32, chromaticity.y as f32],
-            color,
+            color: Self::xy_to_rgb(chromaticity, observer, colorspace),
         }
     }
 
-    /// Converts xy chromaticity coordinates to RGB values.
-    fn xy_to_rgb(chromaticity: Vector2<f64>, observer: Observer) -> [f32; 3] {
-        let colorspace = colorimetry::rgbspace::RgbSpace::SRGB;
-        let xyz = XYZ::try_from_chromaticity(chromaticity.x, chromaticity.y, None, Some(observer))
-            .unwrap();
+    /// Converts xy chromaticity coordinates to OpenGL compatible RGB values.
+    fn xy_to_rgb(chromaticity: Vector2<f64>, observer: Observer, colorspace: RgbSpace) -> [f32; 3] {
+        let xyz =
+            XYZ::from_chromaticity(chromaticity.x, chromaticity.y, None, Some(observer)).unwrap();
+
         let rgb = xyz.rgb(Some(colorspace));
-        // let rgb_vec_f64: Vector3<f64> = *rgb.as_ref();
-        // let rgb_vec_f32 = rgb_vec_f64.cast::<f32>();
-        // let rgb_array = <Vector3<f32> as AsRef<[f32; 3]>>::as_ref(&rgb_vec_f32);
+        let rgb = Self::constrain_rgb_to_gamut(rgb);
+
         rgb.values().map(|v| v as f32)
+    }
+
+    fn constrain_rgb_to_gamut(rgb: RGB) -> RGB {
+        let [r, g, b] = rgb.values();
+        // Amount of white needed to add to get all channels positive
+        let w = -r.min(g).min(b).min(0.0);
+
+        // Positive channel values
+        let [pr, pg, pb] = [r + w, g + w, b + w];
+
+        // The maximum channel value. Used to scale all channels linearly to the range [0, 1]
+        let max = pr.max(pg).max(pb).max(1.0);
+
+        RGB::new(pr / max, pg / max, pb / max, None, None)
     }
 }
 
