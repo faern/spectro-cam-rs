@@ -28,13 +28,13 @@ use std::sync::Arc;
 
 pub struct ChromaticityWindow {
     /// Behind an `Arc<Mutex<…>>` so we can pass it to [`egui::PaintCallback`] and paint later.
-    rotating_triangle: Arc<Mutex<ChromaticityDiagram>>,
+    chromaticity_diagram: Arc<Mutex<ChromaticityDiagram>>,
 }
 
 impl ChromaticityWindow {
     pub fn new(gl: Arc<glow::Context>) -> Self {
         Self {
-            rotating_triangle: Arc::new(Mutex::new(ChromaticityDiagram::new(gl))),
+            chromaticity_diagram: Arc::new(Mutex::new(ChromaticityDiagram::new(gl))),
         }
     }
 
@@ -53,12 +53,12 @@ impl ChromaticityWindow {
         let (rect, _response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::drag());
 
         // Clone locals so we can move them into the paint callback:
-        let rotating_triangle = self.rotating_triangle.clone();
+        let chromaticity_diagram = self.chromaticity_diagram.clone();
 
         let callback = egui::PaintCallback {
             rect,
             callback: Arc::new(egui_glow::CallbackFn::new(move |_info, painter| {
-                rotating_triangle.lock().paint(painter.gl());
+                chromaticity_diagram.lock().paint(painter.gl());
             })),
         };
         ui.painter().add(callback);
@@ -381,7 +381,10 @@ impl ChromaticityDiagram {
         // errors causing their sum to be greater than 1.0. `XYZ::from_chromaticity` requires that
         // this sum is <= 1.0. So we fix this by decrementing both x and y until we are Ok.
         // FIXME: Find a cleaner way, or submit patch to `colorimetry` crate.
-        assert!(x + y <= 1.0 + f64::EPSILON, "Chromaticity coordinates are out of range");
+        assert!(
+            x + y <= 1.0 + f64::EPSILON,
+            "Chromaticity coordinates are out of range"
+        );
         while x + y > 1.0 {
             x = x.next_down();
             y = y.next_down();
