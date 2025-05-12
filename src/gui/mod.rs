@@ -22,6 +22,7 @@ mod camera;
 mod camera_control;
 mod chromaticity;
 mod import_export;
+mod opengl_helpers;
 mod postprocessing;
 
 pub struct SpectrometerGui {

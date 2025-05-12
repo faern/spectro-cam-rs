@@ -9,10 +9,13 @@
 //!
 //!
 
+use super::opengl_helpers::{
+    Vertex, VertexArrayWithBuffer, VertexIndexBuffer, create_index_buffer, create_program,
+    create_vertex_buffer,
+};
 use colorimetry::observer::Observer;
 use colorimetry::rgb::RGB;
 use colorimetry::rgbspace::RgbSpace;
-use colorimetry::std_illuminants::StdIlluminant;
 use colorimetry::xyz::XYZ;
 use colorimetry::{data::illuminants::D65, traits::Light};
 use eframe::{
@@ -54,7 +57,7 @@ impl ChromaticityWindow {
 
         let callback = egui::PaintCallback {
             rect,
-            callback: std::sync::Arc::new(egui_glow::CallbackFn::new(move |_info, painter| {
+            callback: Arc::new(egui_glow::CallbackFn::new(move |_info, painter| {
                 rotating_triangle.lock().paint(painter.gl());
             })),
         };
@@ -62,143 +65,14 @@ impl ChromaticityWindow {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-#[repr(C)]
-struct Vertex {
-    position: [f32; 2],
-    color: [f32; 3],
-}
-
-/// Returns a vertex array object (VAO) representing the given vertices.
-///
-/// This first allocates a vertex buffer object (VBO) and uploads the vertex data to the GPU.
-/// Then it creates a vertex array object (VAO) and binds the VBO to it with VAO attribute
-/// zero pointing to the position data and VAO attribute one pointing to the color data.
-fn create_vertex_buffer(
-    gl: &glow::Context,
-    vertices: &[Vertex],
-    position_attribute_index: u32,
-    color_attribute_index: u32,
-) -> glow::NativeVertexArray {
-    const BYTES_PER_VERTEX: usize = core::mem::size_of::<Vertex>();
-
-    // These need to match the layout of the Vertex struct (number of floats in each field)
-    const NUM_POSITION_COMPONENTS: i32 = 2;
-    const NUM_COLOR_COMPONENTS: i32 = 3;
-
-    // We need a raw byte slice over the vertex data for uploading to the GPU
-    let vertices_u8: &[u8] = unsafe {
-        core::slice::from_raw_parts(
-            vertices.as_ptr() as *const u8,
-            vertices.len() * BYTES_PER_VERTEX,
-        )
-    };
-
-    unsafe {
-        // We construct a buffer and upload the data
-        let vertex_buffer = gl.create_buffer().unwrap();
-        gl.bind_buffer(glow::ARRAY_BUFFER, Some(vertex_buffer));
-        gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, vertices_u8, glow::STATIC_DRAW);
-
-        // We now construct a vertex array to describe the format of the buffer
-        let vertex_array = gl.create_vertex_array().unwrap();
-        gl.bind_vertex_array(Some(vertex_array));
-
-        // Point attribute zero to the position data in the buffer
-        gl.vertex_attrib_pointer_f32(
-            position_attribute_index,
-            NUM_POSITION_COMPONENTS,
-            glow::FLOAT,
-            false,
-            BYTES_PER_VERTEX as i32,
-            core::mem::offset_of!(Vertex, position) as i32,
-        );
-        // Activate the position attribute. By default all attributes are disabled
-        gl.enable_vertex_attrib_array(position_attribute_index);
-
-        // Point attribute one to the color data in the buffer
-        gl.vertex_attrib_pointer_f32(
-            color_attribute_index,
-            NUM_COLOR_COMPONENTS,
-            glow::FLOAT,
-            false,
-            BYTES_PER_VERTEX as i32,
-            core::mem::offset_of!(Vertex, color) as i32,
-        );
-        // Activate the color attribute. By default all attributes are disabled
-        gl.enable_vertex_attrib_array(color_attribute_index);
-        vertex_array
-    }
-}
-
-fn create_index_buffer(gl: &glow::Context, indices: &[u32]) -> glow::NativeBuffer {
-    const BYTES_PER_INDEX: usize = core::mem::size_of::<u32>();
-
-    let indices_u8: &[u8] = unsafe {
-        core::slice::from_raw_parts(
-            indices.as_ptr() as *const u8,
-            indices.len() * BYTES_PER_INDEX,
-        )
-    };
-    unsafe {
-        let index_buffer = gl.create_buffer().unwrap();
-        gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(index_buffer));
-        gl.buffer_data_u8_slice(glow::ELEMENT_ARRAY_BUFFER, indices_u8, glow::STATIC_DRAW);
-        index_buffer
-    }
-}
-
-unsafe fn create_program(
-    gl: &glow::Context,
-    vertex_shader_source: &str,
-    fragment_shader_source: &str,
-) -> glow::NativeProgram {
-    unsafe {
-        let program = gl.create_program().expect("Cannot create shader program");
-
-        let shader_sources = [
-            (glow::VERTEX_SHADER, vertex_shader_source),
-            (glow::FRAGMENT_SHADER, fragment_shader_source),
-        ];
-
-        let mut shaders = Vec::with_capacity(shader_sources.len());
-
-        for (shader_type, shader_source) in shader_sources.iter() {
-            let shader = gl
-                .create_shader(*shader_type)
-                .expect("Cannot create shader");
-            gl.shader_source(shader, shader_source);
-            gl.compile_shader(shader);
-            if !gl.get_shader_compile_status(shader) {
-                panic!("{}", gl.get_shader_info_log(shader));
-            }
-            gl.attach_shader(program, shader);
-            shaders.push(shader);
-        }
-
-        gl.link_program(program);
-        if !gl.get_program_link_status(program) {
-            panic!("{}", gl.get_program_info_log(program));
-        }
-
-        for shader in shaders {
-            gl.detach_shader(program, shader);
-            gl.delete_shader(shader);
-        }
-
-        program
-    }
-}
-
 struct ChromaticityDiagram {
     gl: Arc<glow::Context>,
     program: glow::Program,
-    outline_vertex_array: glow::VertexArray,
-    chromaticity_diagram_vertex_array: glow::VertexArray,
-    chromaticity_diagram_index_buffer: glow::NativeBuffer,
-    chromaticity_diagram_num_elements: usize,
-    srgb_gamut_vertex_array: glow::VertexArray,
-    d65_light_cross: glow::VertexArray,
+    outline_vertex_buffer: VertexArrayWithBuffer,
+    chromaticity_diagram_vertex_buffer: VertexArrayWithBuffer,
+    chromaticity_diagram_index_buffer: VertexIndexBuffer,
+    rgb_gamut_vertex_array: VertexArrayWithBuffer,
+    d65_light_cross: VertexArrayWithBuffer,
 }
 
 impl ChromaticityDiagram {
@@ -234,7 +108,7 @@ impl ChromaticityDiagram {
             "#,
         );
 
-        let program = unsafe { create_program(&gl, vertex_shader_source, fragment_shader_source) };
+        let program = create_program(&gl, vertex_shader_source, fragment_shader_source);
 
         // Get the attribute indexes for our two shader input parameters.
         // These are needed to bind the corresponding vertex buffers to the matching
@@ -247,14 +121,15 @@ impl ChromaticityDiagram {
         let colorspace = RgbSpace::SRGB;
         let outline_vertices = Self::compute_chromaticity_diagram_outline_vertices(observer);
 
-        let outline_vertex_array = create_vertex_buffer(
-            &gl,
+        let outline_vertex_buffer = create_vertex_buffer(
+            gl.clone(),
             &outline_vertices,
             position_attribute_index,
             color_attribute_index,
         );
 
-        let chromaticity_diagram_outline_positions = Self::chromaticity_diagram_outline_positions();
+        let chromaticity_diagram_outline_positions =
+            Self::chromaticity_diagram_outline_positions(observer);
         let [center_x, center_y] = D65.xyz(Some(observer)).chromaticity();
         let center = Vector2::new(center_x, center_y);
         let (chromaticity_diagram_vertices, chromaticity_diagram_indices) =
@@ -270,25 +145,25 @@ impl ChromaticityDiagram {
             chromaticity_diagram_indices.len()
         );
 
-        let chromaticity_diagram_vertex_array = create_vertex_buffer(
-            &gl,
+        let chromaticity_diagram_vertex_buffer = create_vertex_buffer(
+            gl.clone(),
             &chromaticity_diagram_vertices,
             position_attribute_index,
             color_attribute_index,
         );
         let chromaticity_diagram_index_buffer =
-            create_index_buffer(&gl, &chromaticity_diagram_indices);
+            create_index_buffer(gl.clone(), &chromaticity_diagram_indices);
 
-        let srgb_gamut_vertex_array = create_vertex_buffer(
-            &gl,
-            &Self::rgb_gamut_vertices(RgbSpace::SRGB),
+        let rgb_gamut_vertex_array = create_vertex_buffer(
+            gl.clone(),
+            &Self::rgb_gamut_vertices(colorspace),
             position_attribute_index,
             color_attribute_index,
         );
 
         let d65_light_cross = create_vertex_buffer(
-            &gl,
-            &Self::light_to_vertices_cross(StdIlluminant::D65, observer),
+            gl.clone(),
+            &Self::light_to_vertices_cross(colorspace.white(), observer),
             position_attribute_index,
             color_attribute_index,
         );
@@ -296,11 +171,10 @@ impl ChromaticityDiagram {
         Self {
             gl,
             program,
-            outline_vertex_array,
-            chromaticity_diagram_vertex_array,
+            outline_vertex_buffer,
+            chromaticity_diagram_vertex_buffer,
             chromaticity_diagram_index_buffer,
-            chromaticity_diagram_num_elements: chromaticity_diagram_indices.len(),
-            srgb_gamut_vertex_array,
+            rgb_gamut_vertex_array,
             d65_light_cross,
         }
     }
@@ -312,26 +186,27 @@ impl ChromaticityDiagram {
             gl.clear(glow::DEPTH_BUFFER_BIT | glow::COLOR_BUFFER_BIT);
 
             gl.use_program(Some(self.program));
-            // gl.bind_vertex_array(Some(self.outline_vertex_array));
-            // gl.draw_arrays(glow::LINE_LOOP, 0, 320);
 
-            gl.bind_vertex_array(Some(self.chromaticity_diagram_vertex_array));
+            gl.bind_vertex_array(Some(self.chromaticity_diagram_vertex_buffer.vertex_array()));
             gl.bind_buffer(
                 glow::ELEMENT_ARRAY_BUFFER,
-                Some(self.chromaticity_diagram_index_buffer),
+                Some(self.chromaticity_diagram_index_buffer.index_buffer()),
             );
             gl.draw_elements(
                 glow::TRIANGLE_STRIP,
-                self.chromaticity_diagram_num_elements as i32,
+                self.chromaticity_diagram_index_buffer.len(),
                 glow::UNSIGNED_INT,
                 0,
             );
 
-            gl.bind_vertex_array(Some(self.srgb_gamut_vertex_array));
+            gl.bind_vertex_array(Some(self.outline_vertex_buffer.vertex_array()));
+            gl.draw_arrays(glow::LINE_LOOP, 0, self.outline_vertex_buffer.len());
+
+            gl.bind_vertex_array(Some(self.rgb_gamut_vertex_array.vertex_array()));
             gl.line_width(1.5);
             gl.draw_arrays(glow::LINE_LOOP, 0, 3);
 
-            gl.bind_vertex_array(Some(self.d65_light_cross));
+            gl.bind_vertex_array(Some(self.d65_light_cross.vertex_array()));
             gl.line_width(2.0);
             gl.draw_arrays(glow::LINES, 0, 8);
         }
@@ -418,10 +293,9 @@ impl ChromaticityDiagram {
         vertices
     }
 
-    fn chromaticity_diagram_outline_positions() -> Vec<Vector2<f64>> {
+    fn chromaticity_diagram_outline_positions(observer: Observer) -> Vec<Vector2<f64>> {
         const BOTTOM_EDGE_RESOLUTION: u16 = 70;
 
-        let observer = colorimetry::observer::Observer::Std1931;
         let planckian_locus_min_wavelength = observer.data().spectral_locus_nm_min();
         let planckian_locus_max_wavelength = observer.data().spectral_locus_nm_max();
 
@@ -531,11 +405,6 @@ impl Drop for ChromaticityDiagram {
         use glow::HasContext as _;
         unsafe {
             self.gl.delete_program(self.program);
-            self.gl.delete_vertex_array(self.outline_vertex_array);
-            self.gl
-                .delete_vertex_array(self.chromaticity_diagram_vertex_array);
-            self.gl
-                .delete_buffer(self.chromaticity_diagram_index_buffer);
-        };
+        }
     }
 }
