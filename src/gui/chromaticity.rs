@@ -182,8 +182,8 @@ impl ChromaticityDiagram {
     fn paint(&self, gl: &glow::Context) {
         use glow::HasContext as _;
         unsafe {
-            gl.clear_color(0.1, 0.1, 0.1, 1.0);
-            gl.clear(glow::DEPTH_BUFFER_BIT | glow::COLOR_BUFFER_BIT);
+            // gl.clear_color(0.2, 0.1, 0.1, 1.0);
+            // gl.clear(glow::DEPTH_BUFFER_BIT | glow::COLOR_BUFFER_BIT);
 
             gl.use_program(Some(self.program));
 
