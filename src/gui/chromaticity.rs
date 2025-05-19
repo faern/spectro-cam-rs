@@ -51,8 +51,8 @@ impl ChromaticityWindow {
     }
 
     pub fn update(&mut self, ctx: &egui::Context, show: &mut bool, spectrum: &[SpectrumPoint]) {
-        // let spectrum = Illuminant::new(Self::parse_spectrum(spectrum));
-        let spectrum = Illuminant::planckian(6500.0);
+        let spectrum = Illuminant::new(Self::parse_spectrum(spectrum));
+        // let spectrum = Illuminant::planckian(2700.0);
         let xyz = spectrum.xyz(Some(self.observer));
         let [x, y, z] = xyz.values();
         let chromaticity = xyz.chromaticity();
@@ -111,30 +111,31 @@ impl ChromaticityWindow {
         ui.painter().add(callback);
     }
 
-    // fn parse_spectrum(spectrum: &[SpectrumPoint]) -> colorimetry::spectrum::Spectrum {
-    //     let (wavelengths, values): (Vec<f64>, Vec<f64>) = spectrum
-    //         .iter()
-    //         .map(|s| (f64::from(s.wavelength), f64::from(s.value)))
-    //         .unzip();
-    //     dbg!((wavelengths.len(), values.len()));
-    //     let spectrum =
-    //         colorimetry::spectrum::Spectrum::linear_interpolate(&wavelengths, &values).unwrap();
-    //     spectrum
-    // }
+    fn parse_spectrum(spectrum: &[SpectrumPoint]) -> colorimetry::spectrum::Spectrum {
+        let (wavelengths, values): (Vec<f64>, Vec<f64>) = spectrum
+            .iter()
+            .map(|s| (f64::from(s.wavelength), f64::from(s.value)))
+            .unzip();
+        dbg!((wavelengths.len(), values.len()));
+        if wavelengths.len() < 2 {
+            return colorimetry::spectrum::Spectrum::default();
+        }
+        let spectrum =
+            colorimetry::spectrum::Spectrum::linear_interpolate(&wavelengths, &values).unwrap();
+        spectrum
+    }
 }
 
-struct ChromaticityDiagram {
+struct ShaderProgram {
     gl: Arc<glow::Context>,
     program: glow::Program,
-    outline_vertex_buffer: VertexArrayWithBuffer,
-    chromaticity_diagram_vertex_buffer: VertexArrayWithBuffer,
-    chromaticity_diagram_index_buffer: VertexIndexBuffer,
-    rgb_gamut_vertex_array: VertexArrayWithBuffer,
-    d65_light_cross: VertexArrayWithBuffer,
+    offset_uniform_location: glow::UniformLocation,
+    position_attribute_index: u32,
+    color_attribute_index: u32,
 }
 
-impl ChromaticityDiagram {
-    fn new(gl: Arc<glow::Context>, observer: Observer, colorspace: RgbSpace) -> Self {
+impl ShaderProgram {
+    fn new(gl: Arc<glow::Context>) -> Self {
         let (vertex_shader_source, fragment_shader_source) = (
             r#"
                 #version 330
@@ -171,19 +172,60 @@ impl ChromaticityDiagram {
         // Get the attribute indexes for our shader input parameters.
         // These are needed to bind the corresponding vertex buffers to the matching
         // vertex array attributes below.
-        // let offset_attribute_index = dbg!(unsafe { gl.get_uniform_location(program, "offset") }.unwrap());
+        let offset_uniform_location =
+            dbg!(unsafe { gl.get_uniform_location(program, "offset") }.unwrap());
         let position_attribute_index =
             dbg!(unsafe { gl.get_attrib_location(program, "position") }.unwrap());
         let color_attribute_index =
             dbg!(unsafe { gl.get_attrib_location(program, "color") }.unwrap());
+
+        Self {
+            gl,
+            program,
+            offset_uniform_location,
+            position_attribute_index,
+            color_attribute_index,
+        }
+    }
+
+    fn set_offset(&self, gl: &glow::Context, x: f32, y: f32) {
+        use glow::HasContext as _;
+        unsafe {
+            gl.uniform_2_f32(Some(&self.offset_uniform_location), x, y);
+        }
+    }
+}
+
+impl Drop for ShaderProgram {
+    fn drop(&mut self) {
+        use glow::HasContext as _;
+        unsafe {
+            self.gl.delete_program(self.program);
+        }
+    }
+}
+
+struct ChromaticityDiagram {
+    gl: Arc<glow::Context>,
+    program: ShaderProgram,
+    outline_vertex_buffer: VertexArrayWithBuffer,
+    chromaticity_diagram_vertex_buffer: VertexArrayWithBuffer,
+    chromaticity_diagram_index_buffer: VertexIndexBuffer,
+    rgb_gamut_vertex_array: VertexArrayWithBuffer,
+    cross_vertices: VertexArrayWithBuffer,
+}
+
+impl ChromaticityDiagram {
+    fn new(gl: Arc<glow::Context>, observer: Observer, colorspace: RgbSpace) -> Self {
+        let program = ShaderProgram::new(gl.clone());
 
         let outline_vertices = Self::compute_chromaticity_diagram_outline_vertices(observer);
 
         let outline_vertex_buffer = create_vertex_buffer(
             gl.clone(),
             &outline_vertices,
-            position_attribute_index,
-            color_attribute_index,
+            program.position_attribute_index,
+            program.color_attribute_index,
         );
 
         let chromaticity_diagram_outline_positions =
@@ -205,8 +247,8 @@ impl ChromaticityDiagram {
         let chromaticity_diagram_vertex_buffer = create_vertex_buffer(
             gl.clone(),
             &chromaticity_diagram_vertices,
-            position_attribute_index,
-            color_attribute_index,
+            program.position_attribute_index,
+            program.color_attribute_index,
         );
         let chromaticity_diagram_index_buffer =
             create_index_buffer(gl.clone(), &chromaticity_diagram_indices);
@@ -214,15 +256,15 @@ impl ChromaticityDiagram {
         let rgb_gamut_vertex_array = create_vertex_buffer(
             gl.clone(),
             &Self::rgb_gamut_vertices(colorspace, observer),
-            position_attribute_index,
-            color_attribute_index,
+            program.position_attribute_index,
+            program.color_attribute_index,
         );
 
-        let d65_light_cross = create_vertex_buffer(
+        let cross_vertices = create_vertex_buffer(
             gl.clone(),
-            &Self::light_to_vertices_cross(colorspace.white(), observer),
-            position_attribute_index,
-            color_attribute_index,
+            &Self::cross_vertices_at(0.0, 0.0),
+            program.position_attribute_index,
+            program.color_attribute_index,
         );
 
         Self {
@@ -232,18 +274,18 @@ impl ChromaticityDiagram {
             chromaticity_diagram_vertex_buffer,
             chromaticity_diagram_index_buffer,
             rgb_gamut_vertex_array,
-            d65_light_cross,
+            cross_vertices,
         }
     }
 
-    fn paint(&self, gl: &glow::Context, _chromaticity: Chromaticity) {
+    fn paint(&self, gl: &glow::Context, chromaticity: Chromaticity) {
         use glow::HasContext as _;
         unsafe {
-            // gl.clear_color(0.2, 0.1, 0.1, 1.0);
-            // gl.clear(glow::DEPTH_BUFFER_BIT | glow::COLOR_BUFFER_BIT);
+            gl.use_program(Some(self.program.program));
 
-            gl.use_program(Some(self.program));
+            self.program.set_offset(gl, 0.0, 0.0);
 
+            // Draw the chromaticity diagram "background"
             gl.bind_vertex_array(Some(self.chromaticity_diagram_vertex_buffer.vertex_array()));
             gl.bind_buffer(
                 glow::ELEMENT_ARRAY_BUFFER,
@@ -256,14 +298,19 @@ impl ChromaticityDiagram {
                 0,
             );
 
+            // Draw the outline of the chromaticity diagram
             gl.bind_vertex_array(Some(self.outline_vertex_buffer.vertex_array()));
             gl.draw_arrays(glow::LINE_LOOP, 0, self.outline_vertex_buffer.len());
 
+            // Draw the gamut triangle of the selected RGB space
             gl.bind_vertex_array(Some(self.rgb_gamut_vertex_array.vertex_array()));
             gl.line_width(1.5);
             gl.draw_arrays(glow::LINE_LOOP, 0, 3);
 
-            gl.bind_vertex_array(Some(self.d65_light_cross.vertex_array()));
+            // Draw a cross at the measured spectrum position
+            self.program
+                .set_offset(gl, chromaticity.x() as f32, chromaticity.y() as f32);
+            gl.bind_vertex_array(Some(self.cross_vertices.vertex_array()));
             gl.line_width(2.0);
             gl.draw_arrays(glow::LINES, 0, 8);
         }
@@ -294,14 +341,18 @@ impl ChromaticityDiagram {
         ]
     }
 
-    fn light_to_vertices_cross(light: impl Light, observer: Observer) -> [Vertex; 8] {
-        const CROSS_OFFEST: f32 = 0.002;
-        const CROSS_SIZE: f32 = 0.010;
+    fn _light_to_vertices_cross(light: impl Light, observer: Observer) -> [Vertex; 8] {
         let [x, y] = light
             .xyzn(observer, None)
             .chromaticity()
             .to_array()
             .map(|v| v as f32);
+        Self::cross_vertices_at(x, y)
+    }
+
+    fn cross_vertices_at(x: f32, y: f32) -> [Vertex; 8] {
+        const CROSS_OFFEST: f32 = 0.002;
+        const CROSS_SIZE: f32 = 0.010;
         [
             // Left
             Vertex {
@@ -476,10 +527,5 @@ impl ChromaticityDiagram {
 }
 
 impl Drop for ChromaticityDiagram {
-    fn drop(&mut self) {
-        use glow::HasContext as _;
-        unsafe {
-            self.gl.delete_program(self.program);
-        }
-    }
+    fn drop(&mut self) {}
 }
