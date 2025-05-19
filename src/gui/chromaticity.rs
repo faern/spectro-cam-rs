@@ -17,9 +17,10 @@ use super::opengl_helpers::{
 };
 use colorimetry::illuminant::Illuminant;
 use colorimetry::observer::Observer;
-use colorimetry::rgb::RGB;
 use colorimetry::rgbspace::RgbSpace;
-use colorimetry::xyz::XYZ;
+use colorimetry::traits::Filter;
+use colorimetry::widergb::WideRgb;
+use colorimetry::xyz::{Chromaticity, XYZ};
 use colorimetry::{data::illuminants::D65, traits::Light};
 use eframe::{
     egui, egui_glow,
@@ -79,9 +80,9 @@ impl ChromaticityWindow {
                     });
                     col_2.horizontal(|ui| {
                         ui.label("x: ");
-                        ui.monospace(format!("{:.3}", chromaticity[0]));
+                        ui.monospace(format!("{:.3}", chromaticity.x()));
                         ui.label("y: ");
-                        ui.monospace(format!("{:.3}", chromaticity[1]));
+                        ui.monospace(format!("{:.3}", chromaticity.y()));
                     });
                     col_2.horizontal(|ui| {
                         ui.label("Ra: ");
@@ -91,7 +92,7 @@ impl ChromaticityWindow {
             });
     }
 
-    fn custom_painting(&mut self, ui: &mut egui::Ui, chromaticity: [f64; 2]) {
+    fn custom_painting(&mut self, ui: &mut egui::Ui, chromaticity: Chromaticity) {
         // let (rect, _response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::drag());
         let (rect, _response) =
             ui.allocate_exact_size(egui::Vec2::splat(300.0), egui::Sense::drag());
@@ -138,7 +139,7 @@ impl ChromaticityDiagram {
             r#"
                 #version 330
 
-                // uniform float u_angle;
+                uniform vec2 offset;
 
                 in vec2 position;
                 in vec3 color;
@@ -146,7 +147,7 @@ impl ChromaticityDiagram {
                 out vec4 v_color;
 
                 void main() {
-                    gl_Position = vec4(position, 0.0, 1.0);
+                    gl_Position = vec4(position + offset, 0.0, 1.0);
                     gl_Position.x = gl_Position.x * 2.2 - 0.8;
                     gl_Position.y = gl_Position.y * 2.2 - 0.9;
                     v_color = vec4(color, 1.0);
@@ -167,12 +168,14 @@ impl ChromaticityDiagram {
 
         let program = create_program(&gl, vertex_shader_source, fragment_shader_source);
 
-        // Get the attribute indexes for our two shader input parameters.
+        // Get the attribute indexes for our shader input parameters.
         // These are needed to bind the corresponding vertex buffers to the matching
         // vertex array attributes below.
+        // let offset_attribute_index = dbg!(unsafe { gl.get_uniform_location(program, "offset") }.unwrap());
         let position_attribute_index =
-            unsafe { gl.get_attrib_location(program, "position") }.unwrap();
-        let color_attribute_index = unsafe { gl.get_attrib_location(program, "color") }.unwrap();
+            dbg!(unsafe { gl.get_attrib_location(program, "position") }.unwrap());
+        let color_attribute_index =
+            dbg!(unsafe { gl.get_attrib_location(program, "color") }.unwrap());
 
         let outline_vertices = Self::compute_chromaticity_diagram_outline_vertices(observer);
 
@@ -185,8 +188,7 @@ impl ChromaticityDiagram {
 
         let chromaticity_diagram_outline_positions =
             Self::chromaticity_diagram_outline_positions(observer);
-        let [center_x, center_y] = D65.xyz(Some(observer)).chromaticity();
-        let center = Vector2::new(center_x, center_y);
+        let center = D65.xyz(Some(observer)).chromaticity().to_vec();
         let (chromaticity_diagram_vertices, chromaticity_diagram_indices) =
             Self::compute_gl_triangle_strip_from_ring(
                 &chromaticity_diagram_outline_positions,
@@ -211,7 +213,7 @@ impl ChromaticityDiagram {
 
         let rgb_gamut_vertex_array = create_vertex_buffer(
             gl.clone(),
-            &Self::rgb_gamut_vertices(colorspace),
+            &Self::rgb_gamut_vertices(colorspace, observer),
             position_attribute_index,
             color_attribute_index,
         );
@@ -234,7 +236,7 @@ impl ChromaticityDiagram {
         }
     }
 
-    fn paint(&self, gl: &glow::Context, chromaticity: [f64; 2]) {
+    fn paint(&self, gl: &glow::Context, _chromaticity: Chromaticity) {
         use glow::HasContext as _;
         unsafe {
             // gl.clear_color(0.2, 0.1, 0.1, 1.0);
@@ -267,28 +269,39 @@ impl ChromaticityDiagram {
         }
     }
 
-    fn rgb_gamut_vertices(rgb_space: RgbSpace) -> [Vertex; 3] {
-        let [red, green, blue] = rgb_space.primaries_chromaticity();
+    /// Returns three vertices representing the RGB gamut of the given RGB space
+    /// under the given observer.
+    fn rgb_gamut_vertices(rgb_space: RgbSpace, observer: Observer) -> [Vertex; 3] {
+        let [red, green, blue] = rgb_space.data().primaries_as_colorants().map(|colorant| {
+            observer
+                .data()
+                .xyz_from_spectrum(&colorant.spectrum(), None)
+                .chromaticity()
+        });
         [
             Vertex {
-                position: red.map(|v| v as f32),
+                position: red.to_array().map(|v| v as f32),
                 color: [0.0, 0.0, 0.0],
             },
             Vertex {
-                position: green.map(|v| v as f32),
+                position: green.to_array().map(|v| v as f32),
                 color: [0.0, 0.0, 0.0],
             },
             Vertex {
-                position: blue.map(|v| v as f32),
+                position: blue.to_array().map(|v| v as f32),
                 color: [0.0, 0.0, 0.0],
             },
         ]
     }
 
     fn light_to_vertices_cross(light: impl Light, observer: Observer) -> [Vertex; 8] {
-        const CROSS_OFFEST: f32 = 0.001;
-        const CROSS_SIZE: f32 = 0.005;
-        let [x, y] = light.xyzn(observer, None).chromaticity().map(|v| v as f32);
+        const CROSS_OFFEST: f32 = 0.002;
+        const CROSS_SIZE: f32 = 0.010;
+        let [x, y] = light
+            .xyzn(observer, None)
+            .chromaticity()
+            .to_array()
+            .map(|v| v as f32);
         [
             // Left
             Vertex {
@@ -330,15 +343,14 @@ impl ChromaticityDiagram {
     }
 
     fn compute_chromaticity_diagram_outline_vertices(observer: Observer) -> Vec<Vertex> {
-        let planckian_locus_min_wavelength = observer.data().spectral_locus_nm_min();
-        let planckian_locus_max_wavelength = observer.data().spectral_locus_nm_max();
+        let planckian_locus_wavelength_range = observer.data().spectral_locus_wavelength_range();
 
         let mut vertices = Vec::new();
-        for wavelength in planckian_locus_min_wavelength..=planckian_locus_max_wavelength {
+        for wavelength in planckian_locus_wavelength_range {
             // Compute tristimulus values for the monochromatic spectrum
-            let xyz = observer.data().spectral_locus_by_nm(wavelength).unwrap();
+            let xyz = observer.data().xyz_at_wavelength(wavelength).unwrap();
             // Compute the chromaticity coordinates
-            let [x, y] = xyz.chromaticity();
+            let [x, y] = xyz.chromaticity().to_array();
 
             vertices.push(Vertex {
                 position: [x as f32, y as f32],
@@ -351,17 +363,16 @@ impl ChromaticityDiagram {
     fn chromaticity_diagram_outline_positions(observer: Observer) -> Vec<Vector2<f64>> {
         const BOTTOM_EDGE_RESOLUTION: u16 = 70;
 
-        let planckian_locus_min_wavelength = observer.data().spectral_locus_nm_min();
-        let planckian_locus_max_wavelength = observer.data().spectral_locus_nm_max();
+        let spectral_locus_wavelength_range = observer.data().spectral_locus_wavelength_range();
 
         let mut outer_edge_vertexes = Vec::new();
-        for wavelength in planckian_locus_min_wavelength..=planckian_locus_max_wavelength {
+        for wavelength in spectral_locus_wavelength_range {
             // Compute tristimulus values for the monochromatic spectrum
-            let xyz = observer.data().spectral_locus_by_nm(wavelength).unwrap();
+            let xyz = observer.data().xyz_at_wavelength(wavelength).unwrap();
             // Compute the chromaticity coordinates
-            let [x, y] = xyz.chromaticity();
+            let chromaticity = xyz.chromaticity();
 
-            outer_edge_vertexes.push(Vector2::new(x, y));
+            outer_edge_vertexes.push(chromaticity.to_vec());
         }
         let bottom_edge_start = *outer_edge_vertexes.last().unwrap();
         let bottom_edge_end = *outer_edge_vertexes.first().unwrap();
@@ -431,30 +442,25 @@ impl ChromaticityDiagram {
 
     /// Converts xy chromaticity coordinates to OpenGL compatible RGB values.
     fn xy_to_rgb(chromaticity: Vector2<f64>, observer: Observer, colorspace: RgbSpace) -> [f32; 3] {
-        let [mut x, mut y] = [chromaticity.x, chromaticity.y];
-        // For some observers, the chromaticity coordinates along the spectral locus have rounding
-        // errors causing their sum to be greater than 1.0. `XYZ::from_chromaticity` requires that
-        // this sum is <= 1.0. So we fix this by decrementing both x and y until we are Ok.
-        // FIXME: Find a cleaner way, or submit patch to `colorimetry` crate.
-        assert!(
-            x + y <= 1.0 + f64::EPSILON,
-            "Chromaticity coordinates are out of range"
-        );
-        while x + y > 1.0 {
-            x = x.next_down();
-            y = y.next_down();
-        }
-        let xyz = XYZ::from_chromaticity(x, y, None, Some(observer)).unwrap();
+        let chromaticity = Chromaticity::new(chromaticity.x, chromaticity.y);
+
+        let xyz = XYZ::from_chromaticity(chromaticity, None, Some(observer)).unwrap();
 
         let wide_rgb = xyz.rgb(Some(colorspace));
         let rgb = Self::constrain_rgb_to_gamut(wide_rgb);
+        let rgb2 = wide_rgb.compress().values();
+        if rgb != rgb2 {
+            println!(
+                "RGB {wide_rgb:?} compresses to:\n\tmy compression: {rgb:?}\n\tlibrary compress(): {rgb2:?}"
+            );
+        }
 
-        rgb.map(|v| v as f32)
+        rgb2.map(|v| v as f32)
     }
 
     /// Desaturates and scales down the luminance of the given wide (unconstrained) RGB value
     /// until all channel values are in the range [0, 1].
-    fn constrain_rgb_to_gamut(rgb: RGB) -> [f64; 3] {
+    fn constrain_rgb_to_gamut(rgb: WideRgb) -> [f64; 3] {
         let [r, g, b] = rgb.values();
         // Amount of white needed to add to get all channels positive
         let w = -r.min(g).min(b).min(0.0);
