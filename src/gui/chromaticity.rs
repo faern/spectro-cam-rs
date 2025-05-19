@@ -222,7 +222,7 @@ struct ChromaticityDiagram {
     outline_vertex_buffer: VertexArrayWithBuffer,
     chromaticity_diagram_vertex_buffer: VertexArrayWithBuffer,
     chromaticity_diagram_index_buffer: VertexIndexBuffer,
-    planckian_locus_vertex_buffer: Option<VertexArrayWithBuffer>,
+    planckian_locus_vertex_buffer: VertexArrayWithBuffer,
     rgb_gamut_vertex_array: VertexArrayWithBuffer,
     cross_vertices: VertexArrayWithBuffer,
 }
@@ -265,15 +265,12 @@ impl ChromaticityDiagram {
         let chromaticity_diagram_index_buffer =
             create_index_buffer(gl.clone(), &chromaticity_diagram_indices);
 
-        let planckian_locus_vertex_buffer =
-            Self::compute_planckian_locus_vertices(observer).map(|vertices| {
-                create_vertex_buffer(
-                    gl.clone(),
-                    &vertices,
-                    program.position_attribute_index,
-                    program.color_attribute_index,
-                )
-            });
+        let planckian_locus_vertex_buffer = create_vertex_buffer(
+            gl.clone(),
+            &Self::compute_planckian_locus_vertices(observer),
+            program.position_attribute_index,
+            program.color_attribute_index,
+        );
 
         let rgb_gamut_vertex_array = create_vertex_buffer(
             gl.clone(),
@@ -325,11 +322,13 @@ impl ChromaticityDiagram {
             gl.bind_vertex_array(Some(self.outline_vertex_buffer.vertex_array()));
             gl.draw_arrays(glow::LINE_LOOP, 0, self.outline_vertex_buffer.len());
 
-            if let Some(planckian_locus_vertex_buffer) = &self.planckian_locus_vertex_buffer {
-                gl.bind_vertex_array(Some(planckian_locus_vertex_buffer.vertex_array()));
-                gl.line_width(1.0);
-                gl.draw_arrays(glow::LINE_STRIP, 0, planckian_locus_vertex_buffer.len());
-            }
+            gl.bind_vertex_array(Some(self.planckian_locus_vertex_buffer.vertex_array()));
+            gl.line_width(1.0);
+            gl.draw_arrays(
+                glow::LINE_STRIP,
+                0,
+                self.planckian_locus_vertex_buffer.len(),
+            );
 
             // Draw the gamut triangle of the selected RGB space
             gl.bind_vertex_array(Some(self.rgb_gamut_vertex_array.vertex_array()));
@@ -427,15 +426,9 @@ impl ChromaticityDiagram {
     ///
     /// Returns `None` if the observer is not CIE 1931, since the colorimetry library does not
     /// support this currently.
-    fn compute_planckian_locus_vertices(observer: Observer) -> Option<Vec<Vertex>> {
-        if observer != Observer::Std1931 {
-            return None;
-        }
-
+    fn compute_planckian_locus_vertices(observer: Observer) -> Vec<Vertex> {
         let temp_to_vertex = |temp: f64| {
-            let cct = CCT::new(dbg!(temp), 0.0).unwrap();
-            // TODO: This assumes the CIE 1931 observer. Improve this.
-            let chromaticity = XYZ::try_from(cct).unwrap().chromaticity();
+            let chromaticity = observer.data().xyz_planckian_locus(temp).chromaticity();
             Vertex {
                 position: [chromaticity.x() as f32, chromaticity.y() as f32],
                 color: [0.0, 0.0, 0.0],
@@ -454,7 +447,7 @@ impl ChromaticityDiagram {
             vertices.push(temp_to_vertex(temp));
             temp = temp.powf(1.1);
         }
-        Some(vertices)
+        vertices
     }
 
     fn compute_chromaticity_diagram_outline_vertices(observer: Observer) -> Vec<Vertex> {
