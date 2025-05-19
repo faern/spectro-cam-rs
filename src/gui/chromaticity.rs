@@ -57,6 +57,10 @@ impl ChromaticityWindow {
         let [x, y, z] = xyz.values();
         let chromaticity = xyz.chromaticity();
         let cri = spectrum.cri().map(|cri| cri.ra()).unwrap_or(f64::NAN);
+        let (kelvin, tint) = spectrum
+            .cct()
+            .map(|cct| (cct.t(), cct.tint()))
+            .unwrap_or((f64::NAN, f64::NAN));
 
         egui::Window::new("Chromaticity")
             .open(show)
@@ -70,6 +74,7 @@ impl ChromaticityWindow {
                     col_1.label("Tristimulus values: ");
                     col_1.label("Chromaticity coordinates: ");
                     col_1.label("CRI: ");
+                    col_1.label("CCT: ");
                     col_2.horizontal(|ui| {
                         ui.label("X: ");
                         ui.monospace(format!("{:.3}", x));
@@ -87,6 +92,12 @@ impl ChromaticityWindow {
                     col_2.horizontal(|ui| {
                         ui.label("Ra: ");
                         ui.monospace(format!("{:.3}", cri));
+                    });
+                    col_2.horizontal(|ui| {
+                        ui.label("Temp: ");
+                        ui.monospace(format!("{:.3}K", kelvin));
+                        ui.label("Tint: ");
+                        ui.monospace(format!("{:.3}", tint));
                     });
                 });
             });
