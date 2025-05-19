@@ -15,6 +15,7 @@ use super::opengl_helpers::{
     Vertex, VertexArrayWithBuffer, VertexIndexBuffer, create_index_buffer, create_program,
     create_vertex_buffer,
 };
+use colorimetry::cct::CCT;
 use colorimetry::illuminant::Illuminant;
 use colorimetry::observer::Observer;
 use colorimetry::rgbspace::RgbSpace;
@@ -127,7 +128,6 @@ impl ChromaticityWindow {
             .iter()
             .map(|s| (f64::from(s.wavelength), f64::from(s.value)))
             .unzip();
-        dbg!((wavelengths.len(), values.len()));
         if wavelengths.len() < 2 {
             return colorimetry::spectrum::Spectrum::default();
         }
@@ -222,6 +222,7 @@ struct ChromaticityDiagram {
     outline_vertex_buffer: VertexArrayWithBuffer,
     chromaticity_diagram_vertex_buffer: VertexArrayWithBuffer,
     chromaticity_diagram_index_buffer: VertexIndexBuffer,
+    planckian_locus_vertex_buffer: Option<VertexArrayWithBuffer>,
     rgb_gamut_vertex_array: VertexArrayWithBuffer,
     cross_vertices: VertexArrayWithBuffer,
 }
@@ -241,7 +242,7 @@ impl ChromaticityDiagram {
 
         let chromaticity_diagram_outline_positions =
             Self::chromaticity_diagram_outline_positions(observer);
-        let center = D65.xyz(Some(observer)).chromaticity().to_vec();
+        let center = D65.xyz(Some(observer)).chromaticity().to_vector();
         let (chromaticity_diagram_vertices, chromaticity_diagram_indices) =
             Self::compute_gl_triangle_strip_from_ring(
                 &chromaticity_diagram_outline_positions,
@@ -264,6 +265,16 @@ impl ChromaticityDiagram {
         let chromaticity_diagram_index_buffer =
             create_index_buffer(gl.clone(), &chromaticity_diagram_indices);
 
+        let planckian_locus_vertex_buffer =
+            Self::compute_planckian_locus_vertices(observer).map(|vertices| {
+                create_vertex_buffer(
+                    gl.clone(),
+                    &vertices,
+                    program.position_attribute_index,
+                    program.color_attribute_index,
+                )
+            });
+
         let rgb_gamut_vertex_array = create_vertex_buffer(
             gl.clone(),
             &Self::rgb_gamut_vertices(colorspace, observer),
@@ -284,6 +295,7 @@ impl ChromaticityDiagram {
             outline_vertex_buffer,
             chromaticity_diagram_vertex_buffer,
             chromaticity_diagram_index_buffer,
+            planckian_locus_vertex_buffer,
             rgb_gamut_vertex_array,
             cross_vertices,
         }
@@ -313,12 +325,19 @@ impl ChromaticityDiagram {
             gl.bind_vertex_array(Some(self.outline_vertex_buffer.vertex_array()));
             gl.draw_arrays(glow::LINE_LOOP, 0, self.outline_vertex_buffer.len());
 
+            if let Some(planckian_locus_vertex_buffer) = &self.planckian_locus_vertex_buffer {
+                gl.bind_vertex_array(Some(planckian_locus_vertex_buffer.vertex_array()));
+                gl.line_width(1.0);
+                gl.draw_arrays(glow::LINE_STRIP, 0, planckian_locus_vertex_buffer.len());
+            }
+
             // Draw the gamut triangle of the selected RGB space
             gl.bind_vertex_array(Some(self.rgb_gamut_vertex_array.vertex_array()));
             gl.line_width(1.5);
             gl.draw_arrays(glow::LINE_LOOP, 0, 3);
 
             // Draw a cross at the measured spectrum position
+            gl.line_width(2.0);
             self.program
                 .set_offset(gl, chromaticity.x() as f32, chromaticity.y() as f32);
             gl.bind_vertex_array(Some(self.cross_vertices.vertex_array()));
@@ -363,7 +382,7 @@ impl ChromaticityDiagram {
 
     fn cross_vertices_at(x: f32, y: f32) -> [Vertex; 8] {
         const CROSS_OFFEST: f32 = 0.002;
-        const CROSS_SIZE: f32 = 0.010;
+        const CROSS_SIZE: f32 = 0.015;
         [
             // Left
             Vertex {
@@ -404,6 +423,40 @@ impl ChromaticityDiagram {
         ]
     }
 
+    /// Computes the vertices of the Planckian locus line.
+    ///
+    /// Returns `None` if the observer is not CIE 1931, since the colorimetry library does not
+    /// support this currently.
+    fn compute_planckian_locus_vertices(observer: Observer) -> Option<Vec<Vertex>> {
+        if observer != Observer::Std1931 {
+            return None;
+        }
+
+        let temp_to_vertex = |temp: f64| {
+            let cct = CCT::new(dbg!(temp), 0.0).unwrap();
+            // TODO: This assumes the CIE 1931 observer. Improve this.
+            let chromaticity = XYZ::try_from(cct).unwrap().chromaticity();
+            Vertex {
+                position: [chromaticity.x() as f32, chromaticity.y() as f32],
+                color: [0.0, 0.0, 0.0],
+            }
+        };
+
+        let mut vertices = Vec::new();
+        let mut temp = 1000.0;
+        // High resolution at low temperatures
+        while temp < 10_000.0 {
+            vertices.push(temp_to_vertex(temp));
+            temp = temp.powf(1.01);
+        }
+        // Low resolution at high temperatures
+        while temp < 1_000_000.0 {
+            vertices.push(temp_to_vertex(temp));
+            temp = temp.powf(1.1);
+        }
+        Some(vertices)
+    }
+
     fn compute_chromaticity_diagram_outline_vertices(observer: Observer) -> Vec<Vertex> {
         let planckian_locus_wavelength_range = observer.data().spectral_locus_wavelength_range();
 
@@ -434,7 +487,7 @@ impl ChromaticityDiagram {
             // Compute the chromaticity coordinates
             let chromaticity = xyz.chromaticity();
 
-            outer_edge_vertexes.push(chromaticity.to_vec());
+            outer_edge_vertexes.push(chromaticity.to_vector());
         }
         let bottom_edge_start = *outer_edge_vertexes.last().unwrap();
         let bottom_edge_end = *outer_edge_vertexes.first().unwrap();
