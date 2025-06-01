@@ -621,32 +621,10 @@ impl ChromaticityDiagram {
 
         let xyz = XYZ::from_chromaticity(chromaticity, None, Some(observer)).unwrap();
 
-        let wide_rgb = xyz.rgb(Some(colorspace));
-        let rgb = Self::constrain_rgb_to_gamut(wide_rgb);
-        let rgb2 = wide_rgb.compress().values();
-        if rgb != rgb2 {
-            println!(
-                "RGB {wide_rgb:?} compresses to:\n\tmy compression: {rgb:?}\n\tlibrary compress(): {rgb2:?}"
-            );
-        }
+        let wide_rgb: WideRgb = xyz.rgb(Some(colorspace));
+        let in_gamut_rgb = wide_rgb.compress().values();
 
-        rgb2.map(|v| v as f32)
-    }
-
-    /// Desaturates and scales down the luminance of the given wide (unconstrained) RGB value
-    /// until all channel values are in the range [0, 1].
-    fn constrain_rgb_to_gamut(rgb: WideRgb) -> [f64; 3] {
-        let [r, g, b] = rgb.values();
-        // Amount of white needed to add to get all channels positive
-        let w = -r.min(g).min(b).min(0.0);
-
-        // Positive channel values
-        let [pr, pg, pb] = [r + w, g + w, b + w];
-
-        // The maximum channel value. Used to scale all channels linearly to the range [0, 1]
-        let max = pr.max(pg).max(pb).max(1.0);
-
-        [pr / max, pg / max, pb / max]
+        in_gamut_rgb.map(|v| v as f32)
     }
 }
 
