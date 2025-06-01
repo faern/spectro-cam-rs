@@ -15,14 +15,12 @@ use super::opengl_helpers::{
     Vertex, VertexArrayWithBuffer, VertexIndexBuffer, create_index_buffer, create_program,
     create_vertex_buffer,
 };
-use colorimetry::cct::CCT;
-use colorimetry::illuminant::Illuminant;
+use colorimetry::illuminant::{D65, Illuminant};
 use colorimetry::observer::Observer;
-use colorimetry::rgbspace::RgbSpace;
+use colorimetry::rgb::{RgbSpace, WideRgb};
 use colorimetry::traits::Filter;
-use colorimetry::widergb::WideRgb;
+use colorimetry::traits::Light;
 use colorimetry::xyz::{Chromaticity, XYZ};
-use colorimetry::{data::illuminants::D65, traits::Light};
 use eframe::{
     egui, egui_glow,
     glow::{self, HasContext},
@@ -351,7 +349,7 @@ impl ChromaticityDiagram {
         let [red, green, blue] = rgb_space.data().primaries_as_colorants().map(|colorant| {
             observer
                 .data()
-                .xyz_from_spectrum(&colorant.spectrum(), None)
+                .xyz_from_spectrum(&colorant.spectrum())
                 .chromaticity()
         });
         [
