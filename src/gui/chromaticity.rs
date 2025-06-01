@@ -107,35 +107,34 @@ impl ChromaticityWindow {
                         }
                     });
 
-                ui.columns_const(|[col_1, col_2]| {
-                    col_1.label("Tristimulus values: ");
-                    col_1.label("Chromaticity coordinates: ");
-                    col_1.label("CRI: ");
-                    col_1.label("CCT: ");
-                    col_2.horizontal(|ui| {
-                        ui.label("X: ");
-                        ui.monospace(format!("{:.3}", x));
-                        ui.label("Y: ");
-                        ui.monospace(format!("{:.3}", y));
-                        ui.label("Z: ");
-                        ui.monospace(format!("{:.3}", z));
-                    });
-                    col_2.horizontal(|ui| {
-                        ui.label("x: ");
-                        ui.monospace(format!("{:.3}", chromaticity.x()));
-                        ui.label("y: ");
-                        ui.monospace(format!("{:.3}", chromaticity.y()));
-                    });
-                    col_2.horizontal(|ui| {
-                        ui.label("Ra: ");
-                        ui.monospace(format!("{:.3}", cri));
-                    });
-                    col_2.horizontal(|ui| {
-                        ui.label("Temp: ");
-                        ui.monospace(format!("{:.3}K", kelvin));
-                        ui.label("Tint: ");
-                        ui.monospace(format!("{:.3}", tint));
-                    });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("Tristimulus values: ");
+                    ui.label("X: ");
+                    ui.monospace(format!("{:.3}", x));
+                    ui.label("Y: ");
+                    ui.monospace(format!("{:.3}", y));
+                    ui.label("Z: ");
+                    ui.monospace(format!("{:.3}", z));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Chromaticity coordinates: ");
+                    ui.label("x: ");
+                    ui.monospace(format!("{:.3}", chromaticity.x()));
+                    ui.label("y: ");
+                    ui.monospace(format!("{:.3}", chromaticity.y()));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("CRI: ");
+                    ui.label("Ra: ");
+                    ui.monospace(format!("{:.3}", cri));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("CCT: ");
+                    ui.label("Temp: ");
+                    ui.monospace(format!("{:.3}K", kelvin));
+                    ui.label("Tint: ");
+                    ui.monospace(format!("{:.3}", tint));
                 });
             });
     }
