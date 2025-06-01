@@ -25,15 +25,16 @@ use eframe::{
     egui, egui_glow,
     glow::{self, HasContext},
 };
+use egui::ComboBox;
 use egui::mutex::Mutex;
 use nalgebra::Vector2;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 pub struct ChromaticityWindow {
     /// Behind an `Arc<Mutex<…>>` so we can pass it to [`egui::PaintCallback`] and paint later.
     chromaticity_diagram: Arc<Mutex<ChromaticityDiagram>>,
     observer: Observer,
-    colorspace: RgbSpace,
 }
 
 impl ChromaticityWindow {
@@ -45,13 +46,12 @@ impl ChromaticityWindow {
                 gl, observer, colorspace,
             ))),
             observer,
-            colorspace,
         }
     }
 
     pub fn update(&mut self, ctx: &egui::Context, show: &mut bool, spectrum: &[SpectrumPoint]) {
         let spectrum = Illuminant::new(Self::parse_spectrum(spectrum));
-        // let spectrum = Illuminant::planckian(2700.0);
+
         let xyz = spectrum.xyz(Some(self.observer));
         let [x, y, z] = xyz.values();
         let chromaticity = xyz.chromaticity();
@@ -68,6 +68,44 @@ impl ChromaticityWindow {
                     // ui.set_min_size(egui::Vec2::splat(300.0));
                     self.custom_painting(ui, chromaticity);
                 });
+
+                ComboBox::from_label("Observer")
+                    .selected_text(self.observer.to_string())
+                    .show_ui(ui, |ui| {
+                        let mut changed = false;
+                        changed |= ui
+                            .selectable_value(
+                                &mut self.observer,
+                                Observer::Std1931,
+                                Observer::Std1931.to_string(),
+                            )
+                            .changed();
+                        changed |= ui
+                            .selectable_value(
+                                &mut self.observer,
+                                Observer::Std1964,
+                                Observer::Std1964.to_string(),
+                            )
+                            .changed();
+                        changed |= ui
+                            .selectable_value(
+                                &mut self.observer,
+                                Observer::Std2015,
+                                Observer::Std2015.to_string(),
+                            )
+                            .changed();
+                        changed |= ui
+                            .selectable_value(
+                                &mut self.observer,
+                                Observer::Std2015_10,
+                                Observer::Std2015_10.to_string(),
+                            )
+                            .changed();
+
+                        if changed {
+                            self.chromaticity_diagram.lock().set_observer(self.observer);
+                        }
+                    });
 
                 ui.columns_const(|[col_1, col_2]| {
                     col_1.label("Tristimulus values: ");
@@ -105,7 +143,7 @@ impl ChromaticityWindow {
     fn custom_painting(&mut self, ui: &mut egui::Ui, chromaticity: Chromaticity) {
         // let (rect, _response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::drag());
         let (rect, _response) =
-            ui.allocate_exact_size(egui::Vec2::splat(300.0), egui::Sense::drag());
+            ui.allocate_exact_size(egui::Vec2::splat(500.0), egui::Sense::drag());
 
         // Clone locals so we can move them into the paint callback:
         let chromaticity_diagram = self.chromaticity_diagram.clone();
@@ -215,20 +253,53 @@ impl Drop for ShaderProgram {
 }
 
 struct ChromaticityDiagram {
+    observer: Observer,
+    colorspace: RgbSpace,
     gl: Arc<glow::Context>,
     program: ShaderProgram,
+    observer_vertices: HashMap<Observer, ChromaticityDiagramObserverVertices>,
+    cross_vertices: VertexArrayWithBuffer,
+}
+
+struct ChromaticityDiagramObserverVertices {
     outline_vertex_buffer: VertexArrayWithBuffer,
     chromaticity_diagram_vertex_buffer: VertexArrayWithBuffer,
     chromaticity_diagram_index_buffer: VertexIndexBuffer,
     planckian_locus_vertex_buffer: VertexArrayWithBuffer,
     rgb_gamut_vertex_array: VertexArrayWithBuffer,
-    cross_vertices: VertexArrayWithBuffer,
 }
 
 impl ChromaticityDiagram {
     fn new(gl: Arc<glow::Context>, observer: Observer, colorspace: RgbSpace) -> Self {
         let program = ShaderProgram::new(gl.clone());
 
+        let cross_vertices = create_vertex_buffer(
+            gl.clone(),
+            &Self::cross_vertices_at(0.0, 0.0),
+            program.position_attribute_index,
+            program.color_attribute_index,
+        );
+
+        Self {
+            observer,
+            colorspace,
+            gl,
+            program,
+            observer_vertices: HashMap::new(),
+            cross_vertices,
+        }
+    }
+
+    fn set_observer(&mut self, observer: Observer) {
+        self.observer = observer;
+    }
+
+    fn compute_observer_vertices(
+        gl: Arc<glow::Context>,
+        program: &ShaderProgram,
+        observer: Observer,
+        colorspace: RgbSpace,
+    ) -> ChromaticityDiagramObserverVertices {
         let outline_vertices = Self::compute_chromaticity_diagram_outline_vertices(observer);
 
         let outline_vertex_buffer = create_vertex_buffer(
@@ -248,11 +319,6 @@ impl ChromaticityDiagram {
                 observer,
                 colorspace,
             );
-
-        println!(
-            "NUMBER OF VERTICE INDICES: {}",
-            chromaticity_diagram_indices.len()
-        );
 
         let chromaticity_diagram_vertex_buffer = create_vertex_buffer(
             gl.clone(),
@@ -277,59 +343,63 @@ impl ChromaticityDiagram {
             program.color_attribute_index,
         );
 
-        let cross_vertices = create_vertex_buffer(
-            gl.clone(),
-            &Self::cross_vertices_at(0.0, 0.0),
-            program.position_attribute_index,
-            program.color_attribute_index,
-        );
-
-        Self {
-            gl,
-            program,
+        ChromaticityDiagramObserverVertices {
             outline_vertex_buffer,
             chromaticity_diagram_vertex_buffer,
             chromaticity_diagram_index_buffer,
             planckian_locus_vertex_buffer,
             rgb_gamut_vertex_array,
-            cross_vertices,
         }
     }
 
-    fn paint(&self, gl: &glow::Context, chromaticity: Chromaticity) {
+    fn paint(&mut self, gl: &glow::Context, chromaticity: Chromaticity) {
         use glow::HasContext as _;
+
+        let ChromaticityDiagramObserverVertices {
+            outline_vertex_buffer,
+            chromaticity_diagram_vertex_buffer,
+            chromaticity_diagram_index_buffer,
+            planckian_locus_vertex_buffer,
+            rgb_gamut_vertex_array,
+        } = self
+            .observer_vertices
+            .entry(self.observer)
+            .or_insert_with(|| {
+                Self::compute_observer_vertices(
+                    self.gl.clone(),
+                    &self.program,
+                    self.observer,
+                    self.colorspace,
+                )
+            });
         unsafe {
             gl.use_program(Some(self.program.program));
 
             self.program.set_offset(gl, 0.0, 0.0);
 
             // Draw the chromaticity diagram "background"
-            gl.bind_vertex_array(Some(self.chromaticity_diagram_vertex_buffer.vertex_array()));
+            gl.bind_vertex_array(Some(chromaticity_diagram_vertex_buffer.vertex_array()));
             gl.bind_buffer(
                 glow::ELEMENT_ARRAY_BUFFER,
-                Some(self.chromaticity_diagram_index_buffer.index_buffer()),
+                Some(chromaticity_diagram_index_buffer.index_buffer()),
             );
             gl.draw_elements(
                 glow::TRIANGLE_STRIP,
-                self.chromaticity_diagram_index_buffer.len(),
+                chromaticity_diagram_index_buffer.len(),
                 glow::UNSIGNED_INT,
                 0,
             );
 
             // Draw the outline of the chromaticity diagram
-            gl.bind_vertex_array(Some(self.outline_vertex_buffer.vertex_array()));
-            gl.draw_arrays(glow::LINE_LOOP, 0, self.outline_vertex_buffer.len());
+            gl.bind_vertex_array(Some(outline_vertex_buffer.vertex_array()));
+            gl.draw_arrays(glow::LINE_LOOP, 0, outline_vertex_buffer.len());
 
-            gl.bind_vertex_array(Some(self.planckian_locus_vertex_buffer.vertex_array()));
+            gl.bind_vertex_array(Some(planckian_locus_vertex_buffer.vertex_array()));
             gl.line_width(1.0);
-            gl.draw_arrays(
-                glow::LINE_STRIP,
-                0,
-                self.planckian_locus_vertex_buffer.len(),
-            );
+            gl.draw_arrays(glow::LINE_STRIP, 0, planckian_locus_vertex_buffer.len());
 
             // Draw the gamut triangle of the selected RGB space
-            gl.bind_vertex_array(Some(self.rgb_gamut_vertex_array.vertex_array()));
+            gl.bind_vertex_array(Some(rgb_gamut_vertex_array.vertex_array()));
             gl.line_width(1.5);
             gl.draw_arrays(glow::LINE_LOOP, 0, 3);
 
