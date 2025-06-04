@@ -35,6 +35,8 @@ pub struct ChromaticityWindow {
     /// Behind an `Arc<Mutex<…>>` so we can pass it to [`egui::PaintCallback`] and paint later.
     chromaticity_diagram: Arc<Mutex<ChromaticityDiagram>>,
     observer: Observer,
+    colorspace: RgbSpace,
+    normalize_illuminance: bool,
 }
 
 impl ChromaticityWindow {
@@ -46,13 +48,18 @@ impl ChromaticityWindow {
                 gl, observer, colorspace,
             ))),
             observer,
+            colorspace,
+            normalize_illuminance: true,
         }
     }
 
     pub fn update(&mut self, ctx: &egui::Context, show: &mut bool, spectrum: &[SpectrumPoint]) {
         let spectrum = Illuminant::new(Self::parse_spectrum(spectrum));
 
-        let xyz = spectrum.xyz(Some(self.observer));
+        let mut xyz = spectrum.xyz(Some(self.observer));
+        if self.normalize_illuminance {
+            xyz = xyz.set_illuminance(100.0);
+        }
         let [x, y, z] = xyz.values();
         let chromaticity = xyz.chromaticity();
         let cri = if self.observer == Observer::Std1931 {
@@ -110,8 +117,41 @@ impl ChromaticityWindow {
                             self.chromaticity_diagram.lock().set_observer(self.observer);
                         }
                     });
+                ComboBox::from_label("RGB color space")
+                    .selected_text(self.colorspace.name())
+                    .show_ui(ui, |ui| {
+                        let mut changed = false;
+                        changed |= ui
+                            .selectable_value(
+                                &mut self.colorspace,
+                                RgbSpace::SRGB,
+                                RgbSpace::SRGB.to_string(),
+                            )
+                            .changed();
+                        changed |= ui
+                            .selectable_value(
+                                &mut self.colorspace,
+                                RgbSpace::ADOBE,
+                                RgbSpace::ADOBE.name(),
+                            )
+                            .changed();
+                        changed |= ui
+                            .selectable_value(
+                                &mut self.colorspace,
+                                RgbSpace::DisplayP3,
+                                RgbSpace::DisplayP3.name(),
+                            )
+                            .changed();
+
+                        if changed {
+                            self.chromaticity_diagram
+                                .lock()
+                                .set_colorspace(self.colorspace);
+                        }
+                    });
 
                 ui.separator();
+
                 ui.horizontal(|ui| {
                     ui.label("Tristimulus values: ");
                     ui.label("X: ");
@@ -120,19 +160,20 @@ impl ChromaticityWindow {
                     ui.monospace(format!("{:.3}", y));
                     ui.label("Z: ");
                     ui.monospace(format!("{:.3}", z));
+                    ui.checkbox(&mut self.normalize_illuminance, "Normalize");
                 });
                 ui.horizontal(|ui| {
                     ui.label("Chromaticity coordinates: ");
                     ui.label("x: ");
-                    ui.monospace(format!("{:.3}", chromaticity.x()));
+                    ui.monospace(format!("{:.4}", chromaticity.x()));
                     ui.label("y: ");
-                    ui.monospace(format!("{:.3}", chromaticity.y()));
+                    ui.monospace(format!("{:.4}", chromaticity.y()));
                 });
                 ui.horizontal(|ui| {
                     ui.label("CRI: ");
                     if let Some(cri) = cri {
                         ui.label("Ra: ");
-                        ui.monospace(format!("{:.3}", cri));
+                        ui.monospace(format!("{:.2}", cri));
                     } else {
                         ui.label(RichText::new("Only available for CIE 1931 observer").italics());
                     }
@@ -141,9 +182,9 @@ impl ChromaticityWindow {
                     ui.label("CCT: ");
                     if self.observer == Observer::Std1931 {
                         ui.label("Temp: ");
-                        ui.monospace(format!("{:.3} K", kelvin));
+                        ui.monospace(format!("{:.0} K", kelvin));
                         ui.label("Tint: ");
-                        ui.monospace(format!("{:.3}", tint));
+                        ui.monospace(format!("{:.2}", tint));
                     } else {
                         ui.label(RichText::new("Only available for CIE 1931 observer").italics());
                     }
@@ -268,7 +309,7 @@ struct ChromaticityDiagram {
     colorspace: RgbSpace,
     gl: Arc<glow::Context>,
     program: ShaderProgram,
-    observer_vertices: HashMap<Observer, ChromaticityDiagramObserverVertices>,
+    observer_vertices: HashMap<(Observer, RgbSpace), ChromaticityDiagramObserverVertices>,
     cross_vertices: VertexArrayWithBuffer,
 }
 
@@ -303,6 +344,10 @@ impl ChromaticityDiagram {
 
     fn set_observer(&mut self, observer: Observer) {
         self.observer = observer;
+    }
+
+    fn set_colorspace(&mut self, colorspace: RgbSpace) {
+        self.colorspace = colorspace;
     }
 
     fn compute_observer_vertices(
@@ -374,7 +419,7 @@ impl ChromaticityDiagram {
             rgb_gamut_vertex_array,
         } = self
             .observer_vertices
-            .entry(self.observer)
+            .entry((self.observer, self.colorspace))
             .or_insert_with(|| {
                 Self::compute_observer_vertices(
                     self.gl.clone(),
