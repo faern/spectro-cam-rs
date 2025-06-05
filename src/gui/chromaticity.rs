@@ -41,7 +41,7 @@ pub struct ChromaticityWindow {
 
 impl ChromaticityWindow {
     pub fn new(gl: Arc<glow::Context>) -> Self {
-        let observer = Observer::Std1931;
+        let observer = Observer::Cie1931;
         let colorspace = RgbSpace::SRGB;
         Self {
             chromaticity_diagram: Arc::new(Mutex::new(ChromaticityDiagram::new(
@@ -62,7 +62,7 @@ impl ChromaticityWindow {
         }
         let [x, y, z] = xyz.values();
         let chromaticity = xyz.chromaticity();
-        let cri = if self.observer == Observer::Std1931 {
+        let cri = if self.observer == Observer::Cie1931 {
             Some(spectrum.cri().map(|cri| cri.ra()).unwrap_or(f64::NAN))
         } else {
             None
@@ -87,29 +87,29 @@ impl ChromaticityWindow {
                         changed |= ui
                             .selectable_value(
                                 &mut self.observer,
-                                Observer::Std1931,
-                                Observer::Std1931.to_string(),
+                                Observer::Cie1931,
+                                Observer::Cie1931.to_string(),
                             )
                             .changed();
                         changed |= ui
                             .selectable_value(
                                 &mut self.observer,
-                                Observer::Std1964,
-                                Observer::Std1964.to_string(),
+                                Observer::Cie1964,
+                                Observer::Cie1964.to_string(),
                             )
                             .changed();
                         changed |= ui
                             .selectable_value(
                                 &mut self.observer,
-                                Observer::Std2015,
-                                Observer::Std2015.to_string(),
+                                Observer::Cie2015,
+                                Observer::Cie2015.to_string(),
                             )
                             .changed();
                         changed |= ui
                             .selectable_value(
                                 &mut self.observer,
-                                Observer::Std2015_10,
-                                Observer::Std2015_10.to_string(),
+                                Observer::Cie2015_10,
+                                Observer::Cie2015_10.to_string(),
                             )
                             .changed();
 
@@ -131,8 +131,8 @@ impl ChromaticityWindow {
                         changed |= ui
                             .selectable_value(
                                 &mut self.colorspace,
-                                RgbSpace::ADOBE,
-                                RgbSpace::ADOBE.name(),
+                                RgbSpace::Adobe,
+                                RgbSpace::Adobe.name(),
                             )
                             .changed();
                         changed |= ui
@@ -180,7 +180,7 @@ impl ChromaticityWindow {
                 });
                 ui.horizontal(|ui| {
                     ui.label("CCT: ");
-                    if self.observer == Observer::Std1931 {
+                    if self.observer == Observer::Cie1931 {
                         ui.label("Temp: ");
                         ui.monospace(format!("{:.0} K", kelvin));
                         ui.label("Tint: ");
