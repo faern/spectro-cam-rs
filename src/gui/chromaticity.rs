@@ -474,7 +474,6 @@ impl ChromaticityDiagram {
     fn rgb_gamut_vertices(rgb_space: RgbSpace, observer: Observer) -> [Vertex; 3] {
         let [red, green, blue] = rgb_space.data().primaries_as_colorants().map(|colorant| {
             observer
-                .data()
                 .xyz_from_spectrum(&colorant.spectrum())
                 .chromaticity()
         });
@@ -552,7 +551,7 @@ impl ChromaticityDiagram {
     /// support this currently.
     fn compute_planckian_locus_vertices(observer: Observer) -> Vec<Vertex> {
         let temp_to_vertex = |temp: f64| {
-            let chromaticity = observer.data().xyz_planckian_locus(temp).chromaticity();
+            let chromaticity = observer.xyz_planckian_locus(temp).chromaticity();
             Vertex {
                 position: [chromaticity.x() as f32, chromaticity.y() as f32],
                 color: [0.0, 0.0, 0.0],
@@ -575,12 +574,12 @@ impl ChromaticityDiagram {
     }
 
     fn compute_chromaticity_diagram_outline_vertices(observer: Observer) -> Vec<Vertex> {
-        let planckian_locus_wavelength_range = observer.data().spectral_locus_wavelength_range();
+        let planckian_locus_wavelength_range = observer.spectral_locus_wavelength_range();
 
         let mut vertices = Vec::new();
         for wavelength in planckian_locus_wavelength_range {
             // Compute tristimulus values for the monochromatic spectrum
-            let xyz = observer.data().xyz_at_wavelength(wavelength).unwrap();
+            let xyz = observer.xyz_at_wavelength(wavelength).unwrap();
             // Compute the chromaticity coordinates
             let [x, y] = xyz.chromaticity().to_array();
 
@@ -595,12 +594,12 @@ impl ChromaticityDiagram {
     fn chromaticity_diagram_outline_positions(observer: Observer) -> Vec<Vector2<f64>> {
         const BOTTOM_EDGE_RESOLUTION: u16 = 70;
 
-        let spectral_locus_wavelength_range = observer.data().spectral_locus_wavelength_range();
+        let spectral_locus_wavelength_range = observer.spectral_locus_wavelength_range();
 
         let mut outer_edge_vertexes = Vec::new();
         for wavelength in spectral_locus_wavelength_range {
             // Compute tristimulus values for the monochromatic spectrum
-            let xyz = observer.data().xyz_at_wavelength(wavelength).unwrap();
+            let xyz = observer.xyz_at_wavelength(wavelength).unwrap();
             // Compute the chromaticity coordinates
             let chromaticity = xyz.chromaticity();
 
