@@ -25,8 +25,8 @@ use eframe::{
     egui, egui_glow,
     glow::{self, HasContext},
 };
+use egui::ComboBox;
 use egui::mutex::Mutex;
-use egui::{ComboBox, RichText};
 use nalgebra::Vector2;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -62,11 +62,11 @@ impl ChromaticityWindow {
         }
         let [x, y, z] = xyz.values();
         let chromaticity = xyz.chromaticity();
-        let cri = if self.observer == Observer::Cie1931 {
-            Some(spectrum.cri().map(|cri| cri.ra()).unwrap_or(f64::NAN))
-        } else {
-            None
-        };
+        let cri = spectrum.cri().map(|cri| cri.ra()).unwrap_or(f64::NAN);
+        let cfi = spectrum
+            .cfi()
+            .map(|cfi| cfi.general_color_fidelity_index())
+            .unwrap_or(f64::NAN);
         let (kelvin, tint) = xyz
             .cct()
             .map(|cct| (cct.t(), cct.tint()))
@@ -171,23 +171,20 @@ impl ChromaticityWindow {
                 });
                 ui.horizontal(|ui| {
                     ui.label("CRI: ");
-                    if let Some(cri) = cri {
-                        ui.label("Ra: ");
-                        ui.monospace(format!("{:.2}", cri));
-                    } else {
-                        ui.label(RichText::new("Only available for CIE 1931 observer").italics());
-                    }
+                    ui.label("Ra: ");
+                    ui.monospace(format!("{:.2}", cri));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("CFI: ");
+                    ui.label("Rf: ");
+                    ui.monospace(format!("{:.2}", cfi));
                 });
                 ui.horizontal(|ui| {
                     ui.label("CCT: ");
-                    if self.observer == Observer::Cie1931 {
-                        ui.label("Temp: ");
-                        ui.monospace(format!("{:.0} K", kelvin));
-                        ui.label("Tint: ");
-                        ui.monospace(format!("{:.2}", tint));
-                    } else {
-                        ui.label(RichText::new("Only available for CIE 1931 observer").italics());
-                    }
+                    ui.label("Temp: ");
+                    ui.monospace(format!("{:.0} K", kelvin));
+                    ui.label("Tint: ");
+                    ui.monospace(format!("{:.2}", tint));
                 });
             });
     }

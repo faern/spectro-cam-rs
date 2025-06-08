@@ -22,7 +22,7 @@ egui_plot = { version = "0.32.1", features = ["serde"] }
 indexmap = "2.9.0"
 palette = { version = "0.7.6", default-features = false, features = ["std"] }
 #colorimetry = { version = "0.0.5", features = ["supplemental-observers", "cri"] }
-colorimetry = { path = "../colorimetry", features = ["supplemental-observers", "cri", "cct"] }
+colorimetry = { path = "../colorimetry", features = ["supplemental-observers", "cri", "cfi", "cct"] }
 
 [dev-dependencies]
 rstest = "0.25"
