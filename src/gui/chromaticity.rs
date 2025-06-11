@@ -15,6 +15,7 @@ use super::opengl_helpers::{
     Vertex, VertexArrayWithBuffer, VertexIndexBuffer, create_index_buffer, create_program,
     create_vertex_buffer,
 };
+use colorimetry::cam::{CamTransforms, CieCam16, ViewConditions};
 use colorimetry::illuminant::{D65, Illuminant};
 use colorimetry::observer::Observer;
 use colorimetry::rgb::{RgbSpace, WideRgb};
@@ -192,7 +193,7 @@ impl ChromaticityWindow {
     fn custom_painting(&mut self, ui: &mut egui::Ui, chromaticity: Chromaticity) {
         // let (rect, _response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::drag());
         let (rect, _response) =
-            ui.allocate_exact_size(egui::Vec2::splat(500.0), egui::Sense::drag());
+            ui.allocate_exact_size(egui::Vec2::splat(900.0), egui::Sense::drag());
 
         // Clone locals so we can move them into the paint callback:
         let chromaticity_diagram = self.chromaticity_diagram.clone();
@@ -316,6 +317,7 @@ struct ChromaticityDiagramObserverVertices {
     chromaticity_diagram_index_buffer: VertexIndexBuffer,
     planckian_locus_vertex_buffer: VertexArrayWithBuffer,
     rgb_gamut_vertex_array: VertexArrayWithBuffer,
+    ciecam_hue_line_vertex_buffers: Vec<VertexArrayWithBuffer>,
 }
 
 impl ChromaticityDiagram {
@@ -396,12 +398,47 @@ impl ChromaticityDiagram {
             program.color_attribute_index,
         );
 
+        let mut ciecam_hue_line_vertex_buffers = Vec::new();
+        // for edge_pos in chromaticity_diagram_outline_positions.iter().step_by(10) {
+        //     let chromaticity = Chromaticity::new(edge_pos.x, edge_pos.y);
+        //     let xyz = XYZ::from_chromaticity(chromaticity, None, Some(observer)).unwrap();
+        //     ciecam_hue_line_vertex_buffers.push(create_vertex_buffer(
+        //         gl.clone(),
+        //         &Self::compute_ciecam_hue_line(xyz, observer),
+        //         program.position_attribute_index,
+        //         program.color_attribute_index,
+        //     ));
+        // }
+        // for wavelength in [390, 470, 480, 485, 495, 505, 520, 540, 570, 590, 610, 699] {
+        //     let xyz = observer
+        //         .xyz_at_wavelength(wavelength)
+        //         .unwrap()
+        //         .set_illuminance(100.0);
+        //     // let constrained_xyz = XYZ::from_chromaticity(xyz.chromaticity(), None, Some(observer)).unwrap();
+        //     // log::debug!("Luminance1 {}, luminance2: {}", xyz.y(), constrained_xyz.y());
+        //     ciecam_hue_line_vertex_buffers.push(create_vertex_buffer(
+        //         gl.clone(),
+        //         &Self::compute_ciecam_hue_line(xyz, observer),
+        //         program.position_attribute_index,
+        //         program.color_attribute_index,
+        //     ));
+        // }
+        for hue in (1..=360).step_by(20) {
+            ciecam_hue_line_vertex_buffers.push(create_vertex_buffer(
+                gl.clone(),
+                &Self::compute_ciecam_hue_line_for_hue(hue as f64, observer),
+                program.position_attribute_index,
+                program.color_attribute_index,
+            ));
+        }
+
         ChromaticityDiagramObserverVertices {
             outline_vertex_buffer,
             chromaticity_diagram_vertex_buffer,
             chromaticity_diagram_index_buffer,
             planckian_locus_vertex_buffer,
             rgb_gamut_vertex_array,
+            ciecam_hue_line_vertex_buffers,
         }
     }
 
@@ -414,6 +451,7 @@ impl ChromaticityDiagram {
             chromaticity_diagram_index_buffer,
             planckian_locus_vertex_buffer,
             rgb_gamut_vertex_array,
+            ciecam_hue_line_vertex_buffers,
         } = self
             .observer_vertices
             .entry((self.observer, self.colorspace))
@@ -443,26 +481,32 @@ impl ChromaticityDiagram {
                 0,
             );
 
-            // Draw the outline of the chromaticity diagram
-            gl.bind_vertex_array(Some(outline_vertex_buffer.vertex_array()));
-            gl.draw_arrays(glow::LINE_LOOP, 0, outline_vertex_buffer.len());
+            // // Draw the outline of the chromaticity diagram
+            // gl.bind_vertex_array(Some(outline_vertex_buffer.vertex_array()));
+            // gl.draw_arrays(glow::LINE_LOOP, 0, outline_vertex_buffer.len());
 
-            gl.bind_vertex_array(Some(planckian_locus_vertex_buffer.vertex_array()));
-            gl.line_width(1.0);
-            gl.draw_arrays(glow::LINE_STRIP, 0, planckian_locus_vertex_buffer.len());
+            // gl.bind_vertex_array(Some(planckian_locus_vertex_buffer.vertex_array()));
+            // gl.line_width(1.0);
+            // gl.draw_arrays(glow::LINE_STRIP, 0, planckian_locus_vertex_buffer.len());
 
             // Draw the gamut triangle of the selected RGB space
             gl.bind_vertex_array(Some(rgb_gamut_vertex_array.vertex_array()));
             gl.line_width(1.5);
             gl.draw_arrays(glow::LINE_LOOP, 0, 3);
 
-            // Draw a cross at the measured spectrum position
-            gl.line_width(2.0);
-            self.program
-                .set_offset(gl, chromaticity.x() as f32, chromaticity.y() as f32);
-            gl.bind_vertex_array(Some(self.cross_vertices.vertex_array()));
-            gl.line_width(2.0);
-            gl.draw_arrays(glow::LINES, 0, 8);
+            for ciecam_hue_line_vertex_buffer in ciecam_hue_line_vertex_buffers {
+                gl.bind_vertex_array(Some(ciecam_hue_line_vertex_buffer.vertex_array()));
+                gl.line_width(2.0);
+                gl.draw_arrays(glow::LINE_STRIP, 0, ciecam_hue_line_vertex_buffer.len());
+            }
+
+            // // Draw a cross at the measured spectrum position
+            // gl.line_width(2.0);
+            // self.program
+            //     .set_offset(gl, chromaticity.x() as f32, chromaticity.y() as f32);
+            // gl.bind_vertex_array(Some(self.cross_vertices.vertex_array()));
+            // gl.line_width(2.0);
+            // gl.draw_arrays(glow::LINES, 0, 8);
         }
     }
 
@@ -588,19 +632,93 @@ impl ChromaticityDiagram {
         vertices
     }
 
+    fn compute_ciecam_hue_line(xyz: XYZ, observer: Observer) -> Vec<Vertex> {
+        let xyzn = observer.xyz_d65();
+        let viewconditions = ViewConditions::default();
+
+        let xyz_to_vertex = |xyz: XYZ| {
+            let chromaticity = xyz.chromaticity();
+            Vertex {
+                position: [chromaticity.x() as f32, chromaticity.y() as f32],
+                color: [0.5, 0.5, 0.5],
+            }
+        };
+
+        let mut vertices = vec![];
+        // Start with the original XYZ value
+        vertices.push(xyz_to_vertex(xyz));
+
+        // The lightness and hue stay fixed. We only lower the chroma.
+        let [lightness, mut chroma, hue] =
+            dbg!(CieCam16::from_xyz(xyz, xyzn, viewconditions).unwrap().jch());
+        loop {
+            let cam = CieCam16::new([lightness, chroma, hue], xyzn, viewconditions);
+            let xyz = cam.xyz(None, None).unwrap();
+            vertices.push(xyz_to_vertex(xyz));
+
+            // When there are no negative RGB values, we stop.
+            if xyz.rgb(None).values().iter().all(|&v| v >= 0.0) {
+                break;
+            }
+            chroma *= 0.95;
+        }
+        vertices
+    }
+
+    fn compute_ciecam_hue_line_for_hue(hue: f64, observer: Observer) -> Vec<Vertex> {
+        let xyzn = observer.xyz_d65();
+        let viewconditions = ViewConditions::default();
+
+        let xyz_to_vertex = |xyz: XYZ| {
+            let chromaticity = xyz.chromaticity();
+            Vertex {
+                position: [chromaticity.x() as f32, chromaticity.y() as f32],
+                color: [0.9, 0.9, 0.9],
+            }
+        };
+        let is_valid_chromaticity_coordinate = |xyz: XYZ| {
+            let [x, y] = xyz.chromaticity().to_array();
+            (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y) && x + y <= 1.0
+        };
+
+        let mut vertices = vec![];
+        let lightness = 100.0;
+        let mut chroma = 0.0;
+        loop {
+            log::debug!("Hue: {hue}, Chroma: {}", chroma);
+            let cam = CieCam16::new([lightness, chroma, hue], xyzn, viewconditions);
+            let xyz = cam.xyz(None, None).unwrap();
+            vertices.push(xyz_to_vertex(xyz));
+
+            if !is_valid_chromaticity_coordinate(xyz) {
+                break;
+            }
+            chroma = (chroma * 1.1).max(0.1);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        vertices
+    }
+
     fn chromaticity_diagram_outline_positions(observer: Observer) -> Vec<Vector2<f64>> {
         const BOTTOM_EDGE_RESOLUTION: u16 = 70;
 
         let spectral_locus_wavelength_range = observer.spectral_locus_wavelength_range();
 
         let mut outer_edge_vertexes = Vec::new();
-        for wavelength in spectral_locus_wavelength_range {
+        let mut last_position = Vector2::new(0.0, 0.0);
+        for wavelength in spectral_locus_wavelength_range.clone() {
             // Compute tristimulus values for the monochromatic spectrum
             let xyz = observer.xyz_at_wavelength(wavelength).unwrap();
             // Compute the chromaticity coordinates
             let chromaticity = xyz.chromaticity();
+            let position = chromaticity.to_vector();
 
-            outer_edge_vertexes.push(chromaticity.to_vector());
+            if (position - last_position).norm() > 1E-2
+                || wavelength == *spectral_locus_wavelength_range.end()
+            {
+                outer_edge_vertexes.push(position);
+                last_position = position;
+            }
         }
         let bottom_edge_start = *outer_edge_vertexes.last().unwrap();
         let bottom_edge_end = *outer_edge_vertexes.first().unwrap();
@@ -610,6 +728,10 @@ impl ChromaticityDiagram {
             let bottom_edge_vector = bottom_edge_start + bottom_edge_diff * ratio;
             outer_edge_vertexes.push(bottom_edge_vector);
         }
+        log::debug!(
+            "Chromaticity diagram outer edge vertexes: {}",
+            outer_edge_vertexes.len()
+        );
         outer_edge_vertexes
     }
 
@@ -679,6 +801,46 @@ impl ChromaticityDiagram {
 
         in_gamut_rgb.map(|v| v as f32)
     }
+
+    // /// Converts xy chromaticity coordinates to OpenGL compatible RGB values.
+    // fn xy_to_rgb(chromaticity: Vector2<f64>, observer: Observer, colorspace: RgbSpace) -> [f32; 3] {
+    //     let chromaticity = Chromaticity::new(chromaticity.x, chromaticity.y);
+
+    //     let mut xyz = XYZ::from_chromaticity(chromaticity, None, Some(observer)).unwrap();
+    //     let xyzn = observer.xyz_d65();
+    //     let viewconditions = ViewConditions::default();
+
+    //     let cam = CieCam16::from_xyz(xyz, xyzn, viewconditions).unwrap();
+    //     let [lightness, mut chroma, hue] = cam.jch();
+    //     let mut chroma_upper_bound = chroma;
+    //     let mut chroma_lower_bound = 0.0;
+
+    //     let wide_rgb: WideRgb = xyz.rgb(Some(colorspace));
+    //     if wide_rgb.values().iter().all(|&v| v >= 0.0) {
+    //         return wide_rgb.compress().values().map(|v| v as f32);
+    //     }
+    //     let wide_rgb = loop {
+    //         chroma = (chroma_upper_bound + chroma_lower_bound) / 2.0;
+    //         log::debug!("Trying chroma {chroma} for with J {lightness} and H {hue}");
+    //         let cam = CieCam16::new([lightness, chroma, hue], xyzn, viewconditions);
+    //         xyz = cam.xyz(None, None).unwrap();
+
+    //         let wide_rgb: WideRgb = xyz.rgb(Some(colorspace));
+    //         if wide_rgb.values().iter().all(|&v| v >= 0.0) {
+    //             if chroma_upper_bound - chroma_lower_bound < 1E-1 {
+    //                 break wide_rgb;
+    //             }
+    //             chroma_lower_bound = chroma;
+    //             log::debug!("Bringing lower chroma bound up to {chroma_lower_bound}");
+    //         } else {
+    //             chroma_upper_bound = chroma;
+    //             log::debug!("Bringing upper chroma bound down to {chroma_upper_bound}");
+    //         }
+    //         // sleep(Duration::from_millis(100));
+    //     };
+
+    //     wide_rgb.compress().values().map(|v| v as f32)
+    // }
 }
 
 impl Drop for ChromaticityDiagram {
