@@ -701,7 +701,7 @@ impl ChromaticityDiagram {
             vertices.push(xyz_to_vertex(xyz));
 
             // When there are no negative RGB values, we stop.
-            if xyz.rgb(None).values().iter().all(|&v| v >= 0.0) {
+            if xyz.rgb(RgbSpace::SRGB).values().iter().all(|&v| v >= 0.0) {
                 break;
             }
             chroma *= 0.95;
@@ -840,7 +840,7 @@ impl ChromaticityDiagram {
 
         let xyz = XYZ::from_chromaticity(chromaticity, None, Some(observer)).unwrap();
 
-        let wide_rgb: WideRgb = xyz.rgb(Some(colorspace));
+        let wide_rgb: WideRgb = xyz.rgb(colorspace);
         let in_gamut_rgb = wide_rgb.compress().values();
 
         in_gamut_rgb.map(|v| v as f32)
