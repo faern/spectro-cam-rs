@@ -16,11 +16,12 @@ use super::opengl_helpers::{
     create_vertex_buffer,
 };
 use colorimetry::cam::{CamTransforms, CieCam16, ViewConditions};
+use colorimetry::colorant::Colorant;
 use colorimetry::illuminant::{D65, Illuminant};
 use colorimetry::observer::Observer;
+use colorimetry::prelude::CieIlluminant;
 use colorimetry::rgb::{RgbSpace, WideRgb};
-use colorimetry::traits::Filter;
-use colorimetry::traits::Light;
+use colorimetry::traits::{Filter, Light};
 use colorimetry::xyz::{Chromaticity, XYZ};
 use eframe::{
     egui, egui_glow,
@@ -318,6 +319,7 @@ struct ChromaticityDiagramObserverVertices {
     planckian_locus_vertex_buffer: VertexArrayWithBuffer,
     rgb_gamut_vertex_array: VertexArrayWithBuffer,
     ciecam_hue_line_vertex_buffers: Vec<VertexArrayWithBuffer>,
+    ciecam_spectral_locus_vertex_buffer: VertexArrayWithBuffer,
 }
 
 impl ChromaticityDiagram {
@@ -423,14 +425,21 @@ impl ChromaticityDiagram {
         //         program.color_attribute_index,
         //     ));
         // }
-        for hue in (1..=360).step_by(20) {
-            ciecam_hue_line_vertex_buffers.push(create_vertex_buffer(
-                gl.clone(),
-                &Self::compute_ciecam_hue_line_for_hue(hue as f64, observer),
-                program.position_attribute_index,
-                program.color_attribute_index,
-            ));
-        }
+        // for hue in (1..=360).step_by(20) {
+        //     ciecam_hue_line_vertex_buffers.push(create_vertex_buffer(
+        //         gl.clone(),
+        //         &Self::compute_ciecam_hue_line_for_hue(hue as f64, observer),
+        //         program.position_attribute_index,
+        //         program.color_attribute_index,
+        //     ));
+        // }
+
+        let ciecam_spectral_locus_vertex_buffer = create_vertex_buffer(
+            gl.clone(),
+            &Self::compute_ciecam_spectral_locus(observer),
+            program.position_attribute_index,
+            program.color_attribute_index,
+        );
 
         ChromaticityDiagramObserverVertices {
             outline_vertex_buffer,
@@ -439,6 +448,7 @@ impl ChromaticityDiagram {
             planckian_locus_vertex_buffer,
             rgb_gamut_vertex_array,
             ciecam_hue_line_vertex_buffers,
+            ciecam_spectral_locus_vertex_buffer,
         }
     }
 
@@ -452,6 +462,7 @@ impl ChromaticityDiagram {
             planckian_locus_vertex_buffer,
             rgb_gamut_vertex_array,
             ciecam_hue_line_vertex_buffers,
+            ciecam_spectral_locus_vertex_buffer,
         } = self
             .observer_vertices
             .entry((self.observer, self.colorspace))
@@ -494,11 +505,15 @@ impl ChromaticityDiagram {
             gl.line_width(1.5);
             gl.draw_arrays(glow::LINE_LOOP, 0, 3);
 
-            for ciecam_hue_line_vertex_buffer in ciecam_hue_line_vertex_buffers {
-                gl.bind_vertex_array(Some(ciecam_hue_line_vertex_buffer.vertex_array()));
-                gl.line_width(2.0);
-                gl.draw_arrays(glow::LINE_STRIP, 0, ciecam_hue_line_vertex_buffer.len());
-            }
+            // for ciecam_hue_line_vertex_buffer in ciecam_hue_line_vertex_buffers {
+            //     gl.bind_vertex_array(Some(ciecam_hue_line_vertex_buffer.vertex_array()));
+            //     gl.line_width(2.0);
+            //     gl.draw_arrays(glow::LINE_STRIP, 0, ciecam_hue_line_vertex_buffer.len());
+            // }
+
+            gl.bind_vertex_array(Some(ciecam_spectral_locus_vertex_buffer.vertex_array()));
+            gl.line_width(2.0);
+            gl.draw_arrays(glow::LINE_STRIP, 0, ciecam_spectral_locus_vertex_buffer.len());
 
             // // Draw a cross at the measured spectrum position
             // gl.line_width(2.0);
@@ -627,6 +642,35 @@ impl ChromaticityDiagram {
             vertices.push(Vertex {
                 position: [x as f32, y as f32],
                 color: [1.0, 1.0, 1.0],
+            });
+        }
+        vertices
+    }
+
+    fn compute_ciecam_spectral_locus(observer: Observer) -> Vec<Vertex> {
+        let mut vertices = Vec::new();
+        let d65 = CieIlluminant::D65.illuminant();
+        let xyzn = observer.xyz_d65();
+        let viewconditions = ViewConditions::default();
+        for wavelength in observer.spectral_locus_wavelength_range() {
+            // let filter = Colorant::top_hat(wavelength as f64, 1.0);
+            let filter = Colorant::gaussian(wavelength as f64, 5.0);
+            let xyz = observer.xyz(d65, Some(&filter));
+            // let [x, y] = xyz.chromaticity().to_array();
+            // vertices.push(Vertex {
+            //     position: [x as f32, y as f32],
+            //     color: [0.8, 0.8, 0.8],
+            // });
+
+            let cam = CieCam16::from_xyz(xyz, xyzn, viewconditions).unwrap();
+            let [lightness, chroma, hue] = cam.jch();
+            let cam = CieCam16::new([lightness, chroma, hue], xyzn, viewconditions);
+            let xyz = cam.xyz(None, None).unwrap();
+
+            let [x, y] = xyz.chromaticity().to_array();
+            vertices.push(Vertex {
+                position: [x as f32, y as f32],
+                color: [1.0, 0.75, 0.79],
             });
         }
         vertices
